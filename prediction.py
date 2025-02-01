@@ -3,10 +3,6 @@ import pandas as pd
 import numpy as np
 import os
 import joblib
-import warnings
-
-# Suppress sklearn warnings
-warnings.filterwarnings("ignore", category=UserWarning)
 
 # Load trained model if available
 model_file = "eye_glucose_model.pkl"
@@ -31,11 +27,39 @@ def get_sclera_redness(image):
     mask = cv2.inRange(hsv, lower_red, upper_red)
     return round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 5)
 
-def predict_blood_glucose(pupil_size, sclera_redness, vein_prominence, pupil_response_time):
+def get_vein_prominence(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 30, 100)
+    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+
+def get_pupil_circularity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
+    if circles is not None:
+        largest_circle = max(circles[0], key=lambda x: x[2])
+        area = np.pi * (largest_circle[2] ** 2)
+        perimeter = 2 * np.pi * largest_circle[2]
+        circularity = (4 * np.pi * area) / (perimeter ** 2)
+        return round(circularity, 5)
+    return 1.0  # Default if no pupil detected
+
+def get_ir_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.mean(gray), 5)
+
+def get_scleral_vein_density(image):
+    red_channel = image[:, :, 2]  # Extract red channel
+    edges = cv2.Canny(red_channel, 30, 100)
+    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+
+def detect_blink():
+    return np.random.randint(0, 3)  # Simulated blink rate for now
+
+def predict_blood_glucose(pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity, pupil_circularity, scleral_vein_density, blink_rate):
     if model is not None:
-        # Ensure the feature input matches training format
-        features = pd.DataFrame([[pupil_size, sclera_redness, vein_prominence, pupil_response_time]],
-                                columns=["pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"])
+        features = pd.DataFrame([[pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity, pupil_circularity, scleral_vein_density, blink_rate]],
+                                columns=["pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate"])
         return round(model.predict(features)[0], 2)
     return "Model not trained"
 
@@ -53,10 +77,14 @@ def live_eye_analysis():
         
         pupil_size = detect_pupil(frame)
         sclera_redness = get_sclera_redness(frame)
-        vein_prominence = 0.0  # Placeholder, update if real-time analysis is added
-        pupil_response_time = 0.2  # Placeholder, update if real-time tracking is added
+        vein_prominence = get_vein_prominence(frame)
+        pupil_circularity = get_pupil_circularity(frame)
+        ir_intensity = get_ir_intensity(frame)
+        scleral_vein_density = get_scleral_vein_density(frame)
+        blink_rate = detect_blink()
+        pupil_response_time = 0.2  # Placeholder
         
-        predicted_glucose = predict_blood_glucose(pupil_size, sclera_redness, vein_prominence, pupil_response_time)
+        predicted_glucose = predict_blood_glucose(pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity, pupil_circularity, scleral_vein_density, blink_rate)
         
         display_text = f"Pupil: {pupil_size}, Redness: {sclera_redness}, Glucose: {predicted_glucose}"
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
