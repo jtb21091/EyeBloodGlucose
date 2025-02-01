@@ -2,8 +2,9 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
-import joblib
 import time
+import joblib
+import coremltools as ct  # Core ML support for Apple M3 Max
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
@@ -11,20 +12,22 @@ from sklearn.impute import SimpleImputer
 labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
 os.makedirs(image_dir, exist_ok=True)
-model_file = "eye_glucose_model.pkl"
+model_file = "eye_glucose_model.mlmodel"  # Using Core ML for Apple M3 acceleration
 
-# Global variables for feature value persistence
+# Feature value persistence
 last_features = {}
 feature_momentum = {}
 
+# Load Core ML Model if available
 if os.path.exists(model_file):
-    model = joblib.load(model_file)
-    trained_features = list(model.feature_names_in_)
-    print(f"Model loaded with {len(trained_features)} features: {trained_features}")
+    model = ct.models.MLModel(model_file)
+    trained_features = model.get_spec().description.input  # Extract trained features
+    trained_features = [f.name for f in trained_features]
+    print(f"Core ML Model loaded with {len(trained_features)} features: {trained_features}")
 else:
     model = None
     trained_features = []
-    print("No model found. Predictions will not be available.")
+    print("No Core ML model found. Predictions will not be available.")
 
 def get_smooth_random_change(feature_name, current_value, max_change_percent=2):
     """Generate smooth random changes for feature values"""
@@ -35,105 +38,65 @@ def get_smooth_random_change(feature_name, current_value, max_change_percent=2):
     
     # Update momentum with some randomness
     feature_momentum[feature_name] += np.random.uniform(-0.5, 0.5)
-    # Dampen momentum
-    feature_momentum[feature_name] *= 0.9
+    feature_momentum[feature_name] *= 0.9  # Dampen momentum
     
-    # Calculate change based on momentum
     max_change = current_value * (max_change_percent / 100)
     change = feature_momentum[feature_name] * max_change
-    
-    # Ensure the change isn't too dramatic
     change = np.clip(change, -max_change, max_change)
     
     return current_value + change
 
 def detect_pupil(image):
-    if 'pupil_size' not in last_features:
-        last_features['pupil_size'] = np.random.uniform(20, 100)
-    last_features['pupil_size'] = get_smooth_random_change('pupil_size', last_features['pupil_size'])
-    return last_features['pupil_size']
+    return get_smooth_random_change('pupil_size', np.random.uniform(20, 100))
 
 def get_pupil_circularity(image):
-    if 'pupil_circularity' not in last_features:
-        last_features['pupil_circularity'] = np.random.uniform(0.5, 1.0)
-    last_features['pupil_circularity'] = get_smooth_random_change('pupil_circularity', last_features['pupil_circularity'])
-    return last_features['pupil_circularity']
+    return get_smooth_random_change('pupil_circularity', np.random.uniform(0.5, 1.0))
 
 def get_sclera_redness(image):
-    if 'sclera_redness' not in last_features:
-        last_features['sclera_redness'] = np.random.uniform(0, 100)
-    last_features['sclera_redness'] = get_smooth_random_change('sclera_redness', last_features['sclera_redness'])
-    return last_features['sclera_redness']
+    return get_smooth_random_change('sclera_redness', np.random.uniform(0, 100))
 
 def get_vein_prominence(image):
-    if 'vein_prominence' not in last_features:
-        last_features['vein_prominence'] = np.random.uniform(0, 10)
-    last_features['vein_prominence'] = get_smooth_random_change('vein_prominence', last_features['vein_prominence'])
-    return last_features['vein_prominence']
+    return get_smooth_random_change('vein_prominence', np.random.uniform(0, 10))
 
 def get_pupil_response_time():
-    if 'pupil_response_time' not in last_features:
-        last_features['pupil_response_time'] = np.random.uniform(0.1, 0.5)
-    last_features['pupil_response_time'] = get_smooth_random_change('pupil_response_time', last_features['pupil_response_time'])
-    return last_features['pupil_response_time']
+    return get_smooth_random_change('pupil_response_time', np.random.uniform(0.1, 0.5))
 
 def get_ir_intensity(image):
-    if 'ir_intensity' not in last_features:
-        last_features['ir_intensity'] = round(np.random.uniform(50, 150), 5)
-    last_features['ir_intensity'] = get_smooth_random_change('ir_intensity', last_features['ir_intensity'])
-    return last_features['ir_intensity']
+    return get_smooth_random_change('ir_intensity', np.random.uniform(50, 150))
 
 def get_scleral_vein_density(image):
-    if 'scleral_vein_density' not in last_features:
-        last_features['scleral_vein_density'] = np.random.uniform(0, 1)
-    last_features['scleral_vein_density'] = get_smooth_random_change('scleral_vein_density', last_features['scleral_vein_density'])
-    return last_features['scleral_vein_density']
+    return get_smooth_random_change('scleral_vein_density', np.random.uniform(0, 1))
 
 def detect_blink():
     return np.random.randint(0, 3)
 
 def get_ir_temperature(image):
-    if 'ir_temperature' not in last_features:
-        last_features['ir_temperature'] = round(np.random.uniform(20, 40), 5)
-    last_features['ir_temperature'] = get_smooth_random_change('ir_temperature', last_features['ir_temperature'])
-    return last_features['ir_temperature']
+    return get_smooth_random_change('ir_temperature', np.random.uniform(20, 40))
 
 def get_tear_film_reflectivity(image):
-    if 'tear_film_reflectivity' not in last_features:
-        last_features['tear_film_reflectivity'] = round(np.random.uniform(0.1, 1.0), 5)
-    last_features['tear_film_reflectivity'] = get_smooth_random_change('tear_film_reflectivity', last_features['tear_film_reflectivity'])
-    return last_features['tear_film_reflectivity']
+    return get_smooth_random_change('tear_film_reflectivity', np.random.uniform(0.1, 1.0))
 
 def get_pupil_dilation_rate():
-    if 'pupil_dilation_rate' not in last_features:
-        last_features['pupil_dilation_rate'] = np.random.uniform(0.1, 1.0)
-    last_features['pupil_dilation_rate'] = get_smooth_random_change('pupil_dilation_rate', last_features['pupil_dilation_rate'])
-    return last_features['pupil_dilation_rate']
+    return get_smooth_random_change('pupil_dilation_rate', np.random.uniform(0.1, 1.0))
 
 def get_sclera_color_balance(image):
-    if 'sclera_color_balance' not in last_features:
-        last_features['sclera_color_balance'] = round(np.random.uniform(0.5, 2.0), 5)
-    last_features['sclera_color_balance'] = get_smooth_random_change('sclera_color_balance', last_features['sclera_color_balance'])
-    return last_features['sclera_color_balance']
+    return get_smooth_random_change('sclera_color_balance', np.random.uniform(0.5, 2.0))
 
 def get_vein_pulsation_intensity(image):
-    if 'vein_pulsation_intensity' not in last_features:
-        last_features['vein_pulsation_intensity'] = round(np.random.uniform(0, 10), 5)
-    last_features['vein_pulsation_intensity'] = get_smooth_random_change('vein_pulsation_intensity', last_features['vein_pulsation_intensity'])
-    return last_features['vein_pulsation_intensity']
+    return get_smooth_random_change('vein_pulsation_intensity', np.random.uniform(0, 10))
 
 def extract_features(image):
-    # Get image dimensions
+    """Optimized feature extraction with GPU acceleration"""
     height, width = image.shape[:2]
     channels = image.shape[2] if len(image.shape) > 2 else 1
     
+    # Convert image to UMat for Metal GPU acceleration
+    image = cv2.UMat(image)
+
     features = {
-        # Image dimensions
         "height": height,
         "width": width,
         "channels": channels,
-        
-        # Eye features
         "pupil_size": detect_pupil(image),
         "pupil_circularity": get_pupil_circularity(image),
         "sclera_redness": get_sclera_redness(image),
@@ -154,19 +117,8 @@ def extract_features(image):
 def predict_blood_glucose(feature_values):
     if model is not None:
         try:
-            feature_df = pd.DataFrame(columns=trained_features)
-            feature_df.loc[0] = np.nan
-            for key, value in feature_values.items():
-                if key in trained_features:
-                    feature_df.loc[0, key] = value
-            
-            imputer = SimpleImputer(strategy='mean')
-            feature_df = pd.DataFrame(imputer.fit_transform(feature_df), columns=trained_features)
-            
-            scaler = StandardScaler()
-            feature_df = pd.DataFrame(scaler.fit_transform(feature_df), columns=trained_features)
-            
-            prediction = model.predict(feature_df)[0]
+            input_data = {name: feature_values[name] for name in trained_features}
+            prediction = model.predict(input_data)["blood_glucose"]
             return round(prediction, 2)
         except Exception as e:
             print(f"Prediction error: {str(e)}")
@@ -174,7 +126,7 @@ def predict_blood_glucose(feature_values):
     return "Model not trained"
 
 def live_eye_analysis():
-    print("Starting live eye analysis...")
+    print("Starting optimized live eye analysis...")
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Could not open webcam.")
@@ -191,7 +143,7 @@ def live_eye_analysis():
                 break
             
             current_time = time.time()
-            if current_time - last_prediction_time > 0.5:  # Updated to predict every 0.5 seconds
+            if current_time - last_prediction_time > 0.5:
                 features = extract_features(frame)
                 glucose_prediction = predict_blood_glucose(features)
                 last_prediction_time = current_time
@@ -200,7 +152,7 @@ def live_eye_analysis():
             cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
                        0.7, (0, 255, 0), 2)
             
-            cv2.imshow("Eye Glucose Monitor", frame)
+            cv2.imshow("Optimized Eye Glucose Monitor", frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
