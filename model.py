@@ -47,6 +47,18 @@ def detect_pupil(image):
     print("No pupil detected.")
     return 0.0
 
+def get_pupil_circularity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
+    if circles is not None:
+        largest_circle = max(circles[0], key=lambda x: x[2])
+        area = np.pi * (largest_circle[2] ** 2)
+        perimeter = 2 * np.pi * largest_circle[2]
+        circularity = (4 * np.pi * area) / (perimeter ** 2)
+        return round(circularity, 5)
+    return 0.0
+
 def get_sclera_redness(image):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lower_red = np.array([0, 50, 50])
@@ -76,12 +88,13 @@ def update_data():
     
     height, width, channels = frame.shape
     pupil_size = detect_pupil(frame)
+    pupil_circularity = get_pupil_circularity(frame)
     sclera_redness = get_sclera_redness(frame)
     vein_prominence = get_vein_prominence(frame)
     pupil_response_time = get_pupil_response_time()
     ir_intensity = get_ir_intensity(frame)  # New IR measurement
     
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity"]
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "pupil_circularity", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity"]
     
     # Check if file exists and has content
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
@@ -95,7 +108,7 @@ def update_data():
             df[col] = np.nan  # Fill missing columns with NaN
     
     # Append new data
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity]],
+    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, pupil_circularity, sclera_redness, vein_prominence, pupil_response_time, ir_intensity]],
                               columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
