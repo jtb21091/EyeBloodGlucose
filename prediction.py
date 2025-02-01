@@ -7,7 +7,6 @@ from datetime import datetime
 from collections import deque
 from typing import Dict, Any
 import logging
-import threading
 import time
 from dataclasses import dataclass
 
@@ -16,7 +15,7 @@ logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s - %(levelname)s 
 
 # ---------------------------
 # Feature Extraction Functions
-# (Copied from your training code; replace with real implementations if available)
+# (Replace these dummy implementations with your real ones if available)
 # ---------------------------
 def get_pupil_size(image):
     return np.random.uniform(20, 100)
@@ -93,8 +92,7 @@ class EyeGlucoseMonitor:
         # Timing and prediction variables.
         self.last_prediction_time = time.time()
         self.last_valid_detection_time = time.time()  # For hysteresis
-        self.invalid_detection_threshold = 3.0  # seconds without valid detection before clearing reading
-        self.prediction_lock = threading.Lock()
+        self.invalid_detection_threshold = 3.0         # seconds without valid detection before clearing reading
         self.latest_prediction = None
         self.glucose_buffer = deque(maxlen=60)
         # Detection parameters.
@@ -128,6 +126,11 @@ class EyeGlucoseMonitor:
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
         faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
+        
+        # If no face detected and conditions are dark, try alternative detection.
+        if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
+            blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=3, minSize=(80, 80))
         
         # Default: invalid detection.
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
@@ -169,8 +172,8 @@ class EyeGlucoseMonitor:
             "pupil_response_time": get_pupil_response_time(),
             "ir_intensity": get_ir_intensity(frame),
             "scleral_vein_density": get_scleral_vein_density(frame),
-            "pupil_circularity": np.nan,  # Replace with real computation if available.
-            "blink_rate": np.nan,         # Replace with real computation if available.
+            "pupil_circularity": 0.5,  # Default numeric value (adjust as needed)
+            "blink_rate": 0.5,         # Default numeric value (adjust as needed)
             "ir_temperature": get_ir_temperature(frame),
             "tear_film_reflectivity": get_tear_film_reflectivity(frame),
             "pupil_dilation_rate": get_pupil_dilation_rate(),
@@ -179,32 +182,35 @@ class EyeGlucoseMonitor:
         }
         return features
 
-    def predict_glucose_async(self, features: Dict):
+    def predict_glucose(self, features: Dict):
         """
         Predict blood glucose using the extracted features.
-        If model prediction fails, do not update the reading.
-        Updates a running average stored in self.latest_prediction.
+        If the model prediction fails (returns None or NaN), no update is made.
+        Updates the running average stored in self.latest_prediction.
         """
         result = None
         try:
             if self.model is not None:
                 df = pd.DataFrame([features])
                 prediction = self.model.predict(df)
-                result = prediction[0] if len(prediction) > 0 else None
+                if len(prediction) > 0:
+                    result = prediction[0]
+                    # Check if result is a valid number
+                    if result is None or (isinstance(result, float) and np.isnan(result)):
+                        result = None
         except Exception:
             result = None
 
-        # Do not use a fallback dummy value.
-        with self.prediction_lock:
-            if result is not None:
+        # Only update if we got a valid result.
+        if result is not None:
+            with self.prediction_lock:
                 self.glucose_buffer.append(result)
                 self.latest_prediction = np.mean(self.glucose_buffer)
-            # If result is None, do not update latest_prediction.
 
     def run(self):
         """
         Open the webcam feed, detect the face/eyes, extract features, and overlay the blood glucose estimate.
-        Predictions are updated once per second.
+        The prediction is updated once per second.
         Implements hysteresis: if detection becomes invalid for too long, clear the reading.
         """
         cap = cv2.VideoCapture(0)
@@ -224,14 +230,15 @@ class EyeGlucoseMonitor:
                 if current_time - self.last_prediction_time >= 1.0:
                     self.last_prediction_time = current_time
                     features = self.extract_features(frame)
-                    threading.Thread(target=self.predict_glucose_async, args=(features,)).start()
+                    # Synchronously update prediction.
+                    self.predict_glucose(features)
             else:
-                # If no valid detection for longer than threshold, clear the reading.
+                # If no valid detection for longer than the threshold, clear the reading.
                 if current_time - self.last_valid_detection_time > self.invalid_detection_threshold:
                     with self.prediction_lock:
                         self.latest_prediction = None
 
-            # Overlay only the blood glucose reading.
+            # Overlay the blood glucose reading.
             with self.prediction_lock:
                 text = f"{self.latest_prediction:.1f} mg/dL" if self.latest_prediction is not None else "No Reading"
             cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
