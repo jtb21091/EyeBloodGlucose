@@ -182,7 +182,7 @@ class EyeGlucoseMonitor:
     def predict_glucose_async(self, features: Dict):
         """
         Predict blood glucose using the extracted features.
-        If model prediction fails, fall back to a dummy value.
+        If model prediction fails, do not update the reading.
         Updates a running average stored in self.latest_prediction.
         """
         result = None
@@ -193,18 +193,19 @@ class EyeGlucoseMonitor:
                 result = prediction[0] if len(prediction) > 0 else None
         except Exception:
             result = None
-        # Fall back to a dummy prediction if needed.
-        if result is None:
-            result = np.random.uniform(70, 150)
+
+        # Do not use a fallback dummy value.
         with self.prediction_lock:
-            self.glucose_buffer.append(result)
-            self.latest_prediction = np.mean(self.glucose_buffer)
+            if result is not None:
+                self.glucose_buffer.append(result)
+                self.latest_prediction = np.mean(self.glucose_buffer)
+            # If result is None, do not update latest_prediction.
 
     def run(self):
         """
         Open the webcam feed, detect the face/eyes, extract features, and overlay the blood glucose estimate.
         Predictions are updated once per second.
-        Implements hysteresis: if detection becomes invalid, the last reading is kept for a short period.
+        Implements hysteresis: if detection becomes invalid for too long, clear the reading.
         """
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
@@ -218,7 +219,6 @@ class EyeGlucoseMonitor:
             current_time = time.time()
             detection = self.detect_face_and_eyes(frame)
             if detection.is_valid:
-                # Update last valid detection timestamp.
                 self.last_valid_detection_time = current_time
                 # Update prediction once per second.
                 if current_time - self.last_prediction_time >= 1.0:
@@ -226,7 +226,7 @@ class EyeGlucoseMonitor:
                     features = self.extract_features(frame)
                     threading.Thread(target=self.predict_glucose_async, args=(features,)).start()
             else:
-                # If detection is invalid for more than the threshold, clear the reading.
+                # If no valid detection for longer than threshold, clear the reading.
                 if current_time - self.last_valid_detection_time > self.invalid_detection_threshold:
                     with self.prediction_lock:
                         self.latest_prediction = None
