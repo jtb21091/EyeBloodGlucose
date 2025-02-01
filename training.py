@@ -9,6 +9,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.impute import SimpleImputer
 
 labels_file = "eye_glucose_data/labels.csv"
 model_file = "eye_glucose_model.pkl"
@@ -31,20 +32,6 @@ def train_model():
     
     df = pd.read_csv(labels_file)
     
-    df.fillna({
-        "vein_prominence": 0.0, 
-        "pupil_response_time": 0.2, 
-        "ir_intensity": 0.0, 
-        "pupil_circularity": 1.0, 
-        "scleral_vein_density": 0.0, 
-        "blink_rate": 0.0, 
-        "ir_temperature": 0.0, 
-        "tear_film_reflectivity": 0.0, 
-        "pupil_dilation_rate": 0.5, 
-        "sclera_color_balance": 1.0, 
-        "vein_pulsation_intensity": 0.0
-    }, inplace=True)
-    
     df = remove_outliers(df)
     
     if len(df) < 5:
@@ -61,8 +48,9 @@ def train_model():
         print(f"⚠️ Warning: Found non-numeric columns: {list(non_numeric_cols)}")
         X = X.drop(columns=non_numeric_cols)  # Drop non-numeric columns
     
-    # Fill any remaining NaN values with 0
-    X.fillna(0, inplace=True)
+    # Use median imputation for missing values
+    imputer = SimpleImputer(strategy='median')
+    X = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
     
     test_size = 0.2 if len(df) > 10 else 0.0
     if test_size == 0.0:
