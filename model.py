@@ -64,6 +64,11 @@ def get_vein_prominence(image):
 def get_pupil_response_time():
     return np.random.uniform(0.1, 0.4)  # Simulated placeholder value
 
+def get_ir_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ir_intensity = np.mean(gray)  # Average pixel intensity as a rough IR measure
+    return round(ir_intensity, 5)
+
 def update_data():
     filename, frame = capture_eye_image()
     if filename is None or frame is None:
@@ -74,8 +79,9 @@ def update_data():
     sclera_redness = get_sclera_redness(frame)
     vein_prominence = get_vein_prominence(frame)
     pupil_response_time = get_pupil_response_time()
+    ir_intensity = get_ir_intensity(frame)  # New IR measurement
     
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"]
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity"]
     
     # Check if file exists and has content
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
@@ -89,7 +95,7 @@ def update_data():
             df[col] = np.nan  # Fill missing columns with NaN
     
     # Append new data
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time]],
+    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity]],
                               columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
