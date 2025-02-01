@@ -4,11 +4,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+# Define file paths
 labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
 os.makedirs(image_dir, exist_ok=True)
 
-# Load the Haar cascade for eye detection (make sure the XML file path is correct)
+# Load Haar cascade for eye detection
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
 
 def capture_eye_image():
@@ -18,7 +19,6 @@ def capture_eye_image():
         return None, None
 
     cv2.waitKey(500)  # Delay for camera stabilization
-
     ret, frame = cap.read()
     cap.release()
 
@@ -26,24 +26,32 @@ def capture_eye_image():
         print("Error: Could not capture image.")
         return None, None
 
-    # Optionally, convert to grayscale for detection
+    # Convert to grayscale for detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
 
+    # If no eyes detected, do not proceed.
     if len(eyes) == 0:
-        print("No eyes detected.")
-    else:
-        # For demonstration, draw rectangles around detected eyes
-        for (ex, ey, ew, eh) in eyes:
-            cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
+        print("No eyes detected. Data not added.")
+        return None, None
 
+    # Compute a bounding box that encloses all detected eyes.
+    x_min = min([x for (x, y, w, h) in eyes])
+    y_min = min([y for (x, y, w, h) in eyes])
+    x_max = max([x + w for (x, y, w, h) in eyes])
+    y_max = max([y + h for (x, y, w, h) in eyes])
+
+    # Crop the image to the region containing the eyes.
+    roi = frame[y_min:y_max, x_min:x_max]
+
+    # Save the cropped eye region
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"eye_{timestamp}.jpg"
     filepath = os.path.join(image_dir, filename)
-    cv2.imwrite(filepath, frame)
-    print(f"Image saved: {filepath}")
+    cv2.imwrite(filepath, roi)
+    print(f"Eye region saved: {filepath}")
 
-    return filename, frame
+    return filename, roi
 
 def get_birefringence_index(image):
     """Estimate birefringence using edge density and gradient contrast."""
@@ -65,12 +73,13 @@ def get_ir_temperature(image):
     return round(temperature, 2)
 
 def update_data():
-    filename, frame = capture_eye_image()
-    if filename is None or frame is None:
+    filename, roi = capture_eye_image()
+    if filename is None or roi is None:
+        # If no eyes are detected, exit without adding data.
         return
 
-    birefringence_index = get_birefringence_index(frame)
-    ir_temperature = get_ir_temperature(frame)  # Calculate IR temperature from the image
+    birefringence_index = get_birefringence_index(roi)
+    ir_temperature = get_ir_temperature(roi)  # Calculate IR temperature from the ROI
 
     # Define the columns for our CSV
     columns = [
@@ -99,7 +108,7 @@ def update_data():
         np.random.uniform(0.1, 0.5),          # pupil_response_time
         np.random.uniform(10, 255),         # ir_intensity
         np.random.uniform(0, 1),            # scleral_vein_density
-        ir_temperature,                     # ir_temperature calculated from image
+        ir_temperature,                     # ir_temperature calculated from ROI
         np.random.uniform(10, 40),          # tear_film_reflectivity
         np.random.uniform(0, 255),          # pupil_dilation_rate
         np.random.uniform(0.1, 1.0),          # sclera_color_balance
