@@ -16,13 +16,10 @@ def remove_outliers(df):
     Q1 = df["blood_glucose"].quantile(0.25)
     Q3 = df["blood_glucose"].quantile(0.75)
     IQR = Q3 - Q1
-
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-
     df_filtered = df[(df["blood_glucose"] >= lower_bound) & (df["blood_glucose"] <= upper_bound)]
     print(f"Outliers removed. Dataset reduced from {len(df)} to {len(df_filtered)} rows.")
-    
     return df_filtered
 
 def train_model(use_neural_network=False):
@@ -37,7 +34,6 @@ def train_model(use_neural_network=False):
     
     # Remove outliers
     df = remove_outliers(df)
-
     print(f"Dataset size after cleaning: {len(df)} rows")
     
     if len(df) < 5:
@@ -48,11 +44,12 @@ def train_model(use_neural_network=False):
     X = df[["pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate"]]
     y = df["blood_glucose"]
     
-    # Check for NaN values before training
-    if X.isnull().sum().sum() > 0:
-        print("⚠️ Warning: Training data contains NaN values! Filling missing values now.")
-        X.fillna(0, inplace=True)
-
+    # Remove constant features (features that don't change)
+    constant_features = [col for col in X.columns if X[col].nunique() == 1]
+    if constant_features:
+        print(f"Removing constant features: {constant_features}")
+        X.drop(columns=constant_features, inplace=True)
+    
     test_size = 0.2 if len(df) > 10 else 0.0  # Only split if enough data
     if test_size == 0.0:
         X_train, y_train = X, y
@@ -75,12 +72,11 @@ def train_model(use_neural_network=False):
     else:
         model = LinearRegression()
         model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
     
+    predictions = model.predict(X_test)
     mse = mean_squared_error(y_test, predictions)
     r2 = r2_score(y_test, predictions)  # Calculate R² score
-
+    
     print(f"Model trained. MSE: {mse:.10f}")
     print(f"Model trained. R² Score: {r2:.5f}")  # Display R² Score
     
