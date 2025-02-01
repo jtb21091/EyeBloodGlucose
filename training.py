@@ -4,19 +4,14 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 
-from sklearn.model_selection import (
-    train_test_split, 
-    RandomizedSearchCV, 
-    learning_curve
-)
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
 from sklearn.linear_model import ElasticNet
 from sklearn.neural_network import MLPRegressor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
-
 from scipy.stats import uniform, randint
 import logging
 
@@ -99,7 +94,7 @@ class EyeGlucoseModel:
 
     def get_model_configurations(self):
         """
-        Define a set of models and their hyperparameter search spaces.
+        Define models and their hyperparameter search spaces.
         
         Returns:
             A dictionary with model configurations.
@@ -116,7 +111,7 @@ class EyeGlucoseModel:
                 "model": RandomForestRegressor(),
                 "params": {
                     "n_estimators": randint(100, 500),
-                    "max_depth": randint(5, 30),
+                    "max_depth": randint(5, 50),
                     "min_samples_split": randint(2, 10),
                     "min_samples_leaf": randint(1, 4)
                 }
@@ -126,7 +121,7 @@ class EyeGlucoseModel:
                 "params": {
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
-                    "max_depth": randint(3, 10),
+                    "max_depth": randint(3, 15),
                     "subsample": uniform(0.6, 1.0)
                 }
             },
@@ -161,7 +156,6 @@ class EyeGlucoseModel:
             n_jobs=-1,
             train_sizes=np.linspace(0.1, 1.0, 10)
         )
-        # Convert negative MSE to positive loss values
         train_loss = -np.mean(train_scores, axis=1)
         val_loss = -np.mean(val_scores, axis=1)
 
@@ -185,55 +179,57 @@ class EyeGlucoseModel:
         After evaluating all models, the best one is saved.
         """
         X, y = self.prepare_data()
-        
-        # Create training and validation sets
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        # Create preprocessing pipeline (imputation and scaling)
-        preprocessor = Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ])
-        
+
+        # Set whether to include polynomial features (set to False if you prefer not to)
+        use_poly_features = False
+
+        # Build the preprocessing pipeline
+        if use_poly_features:
+            preprocessor = Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler()),
+                ('poly', PolynomialFeatures(degree=2, include_bias=False))
+            ])
+        else:
+            preprocessor = Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ])
+
         best_score = float('-inf')
         best_model_name = None
+        best_estimator = None
+
         models = self.get_model_configurations()
-        
+        # Increase the number of iterations for a more thorough search.
+        n_iter_search = 50
+
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
-            
-            # Create a pipeline that first preprocesses and then fits the model
             pipeline = Pipeline([
                 ('preprocessor', preprocessor),
                 ('regressor', config['model'])
             ])
-            
-            # Set up RandomizedSearchCV for hyperparameter tuning
             search = RandomizedSearchCV(
                 pipeline,
                 {f"regressor__{key}": value for key, value in config['params'].items()},
-                n_iter=20,
+                n_iter=n_iter_search,
                 cv=5,
                 scoring='r2',
                 n_jobs=-1,
                 random_state=42
             )
-            
             search.fit(X_train, y_train)
-            
-            # Evaluate on the validation set
             y_pred = search.predict(X_val)
             r2 = r2_score(y_val, y_pred)
             mse = mean_squared_error(y_val, y_pred)
             mae = mean_absolute_error(y_val, y_pred)
-            
             logging.info(f"Best parameters for {name}: {search.best_params_}")
             logging.info(f"Metrics for {name}:")
             logging.info(f"  R² Score: {r2:.5f}")
             logging.info(f"  MSE: {mse:.5f}")
             logging.info(f"  MAE: {mae:.5f}")
-            
-            # Plot actual vs. predicted values
             plt.figure(figsize=(10, 6))
             plt.scatter(y_val, y_pred, alpha=0.5)
             plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'r--', lw=2)
@@ -241,26 +237,22 @@ class EyeGlucoseModel:
             plt.ylabel("Predicted Values")
             plt.title(f"{name}: Actual vs. Predicted Values")
             plt.show()
-            
-            # Plot the learning curve (training and validation loss)
             self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
-            
-            # Keep track of the best model based on R² score
             if r2 > best_score:
                 best_score = r2
-                self.best_model = search.best_estimator_
+                best_estimator = search.best_estimator_
                 best_model_name = name
-        
+
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
+        self.best_model = best_estimator
         self.save_model()
-        
+
     def save_model(self):
         """
         Save the best trained model (including the preprocessing pipeline) to disk.
         """
         if self.best_model is None:
             raise ValueError("No model has been trained yet.")
-        
         joblib.dump(self.best_model, self.model_file)
         logging.info(f"Best model saved as: {self.model_file}")
 
