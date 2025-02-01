@@ -2,15 +2,10 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
-import joblib
 from datetime import datetime
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
 
 labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
-model_file = "eye_glucose_model.pkl"
 os.makedirs(image_dir, exist_ok=True)
 
 def capture_eye_image():
@@ -54,17 +49,14 @@ def get_sclera_redness(image):
     lower_red = np.array([0, 50, 50])
     upper_red = np.array([10, 255, 255])
     mask = cv2.inRange(hsv, lower_red, upper_red)
-    redness_intensity = round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 10)
-    return redness_intensity
+    return round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 10)
 
 def get_vein_prominence(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
-    vein_density = round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 10)
-    return vein_density
+    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 10)
 
 def get_pupil_response_time():
-    # Placeholder: In real implementation, analyze consecutive frames to measure reaction time.
     return np.random.uniform(0.1, 0.4)  # Simulating random reaction time in seconds
 
 def update_data():
@@ -87,7 +79,7 @@ def update_data():
                               columns=["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"])
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
-    print(f"New data added to CSV: {filename}, Pupil Size: {pupil_size}, Sclera Redness: {sclera_redness}, Vein Prominence: {vein_prominence}, Pupil Response Time: {pupil_response_time}")
+    print(f"New data added to CSV: {filename}")
 
 if __name__ == "__main__":
     update_data()
