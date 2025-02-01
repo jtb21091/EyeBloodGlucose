@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
+import logging
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
 from sklearn.linear_model import ElasticNet, LinearRegression
@@ -13,7 +14,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
-import logging
 
 # Additional model imports:
 from sklearn.svm import SVR                   # Support Vector Regressor
@@ -23,15 +23,57 @@ from sklearn.tree import DecisionTreeRegressor     # Decision Tree Regressor
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+#########################################
+# Helper functions to compute extra metrics
+#########################################
+
+def compute_mard(y_true, y_pred):
+    """
+    Compute the Mean Absolute Relative Difference (MARD)
+    
+    Args:
+        y_true: Ground truth target values (array-like)
+        y_pred: Predicted target values (array-like)
+        
+    Returns:
+        MARD value in percent.
+    """
+    epsilon = 1e-8  # small number to avoid division by zero
+    return np.mean(np.abs((y_true - y_pred) / (y_true + epsilon))) * 100
+
+
+def compute_sigma_level(y_true, y_pred, TEa=15):
+    """
+    Compute a Sigma Level metric based on the quality-control formula:
+    
+        Sigma = (TEa - |bias|) / SD(error)
+    
+    where TEa is the Total Allowable Error (set to 15 by default).
+    
+    Args:
+        y_true: Ground truth target values (array-like)
+        y_pred: Predicted target values (array-like)
+        TEa: Total allowable error (in the same units as y_true)
+        
+    Returns:
+        Sigma level value (if SD(error)==0, returns float('inf')).
+    """
+    errors = y_pred - y_true
+    bias = np.mean(errors)
+    sd = np.std(errors)
+    if sd == 0:
+        return float('inf')
+    return (TEa - np.abs(bias)) / sd
+
+
+#########################################
+# Main Model Training Class
+#########################################
 
 class EyeGlucoseModel:
     def __init__(self, labels_file="eye_glucose_data/labels.csv", model_file="eye_glucose_model.pkl"):
         """
         Initialize the EyeGlucoseModel training class.
-        
-        Args:
-            labels_file: Path to the CSV file with data.
-            model_file: Path to save the best model.
         """
         self.labels_file = labels_file
         self.model_file = model_file
@@ -39,54 +81,36 @@ class EyeGlucoseModel:
 
     def remove_outliers(self, df):
         """
-        Remove outliers based only on all numeric variables (except 'blood_glucose') using a Z-score threshold.
-        If a row contains an outlier (Z-score > 6) in any other variable, the entire row is removed.
-        
-        Args:
-            df: Input DataFrame.
-        
-        Returns:
-            DataFrame with outliers removed.
+        Remove outliers based on non-target numeric features (using a Z-score threshold).
         """
         df_clean = df.copy()
         numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols.remove("blood_glucose")  # Exclude blood_glucose from outlier detection
-        
-        # Identify outliers using Z-score with a threshold of 6
+        numeric_cols.remove("blood_glucose")  # Exclude target
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 6).any(axis=1)  # Flag rows where any variable has a Z-score > 6
-        
+        outliers_z = (z_scores > 6).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
-        
         removed_count = len(df) - len(df_clean)
         logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
-        
         return df_clean
 
     def prepare_data(self):
         """
-        Load and prepare data for training.
-        
-        Returns:
-            A tuple (X, y) where X contains the features and y the target variable.
+        Load data, remove outliers and prepare features.
         """
         if not os.path.exists(self.labels_file):
             raise FileNotFoundError(f"Data file not found: {self.labels_file}")
-        
         df = pd.read_csv(self.labels_file)
         df = self.remove_outliers(df)
-        
         if len(df) < 5:
             raise ValueError(f"Not enough data to train (found {len(df)} rows). Need at least 5 rows.")
         
-        # Feature engineering: add time_of_day from timestamp if available
+        # Feature engineering: add time_of_day if timestamp available
         if 'timestamp' in df.columns:
             df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour
         
-        # Split features and target
         y = df["blood_glucose"].astype(float)
         
-        # Define the reduced features explicitly (pupil_circularity removed)
+        # Define a list of reduced features (adjust as needed)
         reduced_features = [
             'pupil_size', 
             'sclera_redness', 
@@ -103,7 +127,6 @@ class EyeGlucoseModel:
         ]
         X = df[reduced_features]
     
-        # Remove non-numeric columns with a warning
         non_numeric_cols = X.select_dtypes(exclude=['number']).columns
         if len(non_numeric_cols) > 0:
             logging.warning(f"Dropping non-numeric columns: {list(non_numeric_cols)}")
@@ -113,10 +136,7 @@ class EyeGlucoseModel:
 
     def get_model_configurations(self):
         """
-        Define models and their hyperparameter search spaces.
-        
-        Returns:
-            A dictionary with model configurations.
+        Define models and hyperparameter search spaces.
         """
         models = {
             "ElasticNet": {
@@ -153,7 +173,7 @@ class EyeGlucoseModel:
                     "learning_rate_init": uniform(0.0001, 0.01)
                 }
             },
-            # NOTE: Added additional models below.
+            # Additional models:
             "SVR": {
                 "model": SVR(),
                 "params": {
@@ -186,8 +206,7 @@ class EyeGlucoseModel:
                     final_estimator=LinearRegression()
                 ),
                 "params": {
-                    # You can tune the final estimator parameters if desired.
-                    # For now, we leave it empty.
+                    # (Optional tuning for the final estimator could be added)
                 }
             }
         }
@@ -195,13 +214,7 @@ class EyeGlucoseModel:
 
     def plot_learning_curve(self, estimator, X_train, y_train, model_name):
         """
-        Plot the learning curve (training and validation loss) for the given estimator.
-        
-        Args:
-            estimator: The estimator to evaluate.
-            X_train: Training features.
-            y_train: Training target.
-            model_name: Name of the model (for plot title).
+        Plot the learning curve (training and validation loss).
         """
         train_sizes, train_scores, val_scores = learning_curve(
             estimator,
@@ -227,20 +240,15 @@ class EyeGlucoseModel:
 
     def train_model(self):
         """
-        Train and evaluate models using cross-validation and hyperparameter tuning.
-        For each model, displays:
-          - Scatter plot of actual vs. predicted values.
-          - Learning curve (training and validation loss).
-        
-        After evaluating all models, the best one is saved.
+        Train and evaluate each model via hyperparameter tuning.
+        In addition to R²/MSE/MAE, this version computes MARD and Sigma Level.
+        For the Neural Network model, we also demonstrate an epoch–by–epoch loop.
         """
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Set whether to include polynomial features (set to False if you prefer not to)
+        # Build the preprocessing pipeline (optionally including polynomial features)
         use_poly_features = False
-
-        # Build the preprocessing pipeline
         if use_poly_features:
             preprocessor = Pipeline([
                 ('imputer', SimpleImputer(strategy='median')),
@@ -258,7 +266,6 @@ class EyeGlucoseModel:
         best_estimator = None
 
         models = self.get_model_configurations()
-        # Increase the number of iterations for a more thorough search.
         n_iter_search = 50
 
         for name, config in models.items():
@@ -281,11 +288,18 @@ class EyeGlucoseModel:
             r2 = r2_score(y_val, y_pred)
             mse = mean_squared_error(y_val, y_pred)
             mae = mean_absolute_error(y_val, y_pred)
+            mard_value = compute_mard(y_val.values, y_pred)
+            sigma_value = compute_sigma_level(y_val.values, y_pred, TEa=15)
+            
             logging.info(f"Best parameters for {name}: {search.best_params_}")
             logging.info(f"Metrics for {name}:")
             logging.info(f"  R² Score: {r2:.5f}")
             logging.info(f"  MSE: {mse:.5f}")
             logging.info(f"  MAE: {mae:.5f}")
+            logging.info(f"  MARD: {mard_value:.5f}%")
+            logging.info(f"  Sigma Level: {sigma_value:.5f}")
+
+            # Plot actual vs. predicted and the learning curve
             plt.figure(figsize=(10, 6))
             plt.scatter(y_val, y_pred, alpha=0.5)
             plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'r--', lw=2)
@@ -294,6 +308,49 @@ class EyeGlucoseModel:
             plt.title(f"{name}: Actual vs. Predicted Values")
             plt.show()
             self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
+
+            # For the Neural Network model, additionally show an epoch-by-epoch training loop.
+            if name == "Neural Network":
+                logging.info("Starting custom epoch loop for Neural Network to track MARD & Sigma Level...")
+                # Extract best hyperparameters and reinitialize the regressor
+                nn_params = {key.split("regressor__")[1]: value for key, value in search.best_params_.items()}
+                # Set max_iter=1 and warm_start=True so that each call to .fit() does one epoch more.
+                nn_model = MLPRegressor(max_iter=1, warm_start=True, early_stopping=False, random_state=42, **nn_params)
+                nn_pipeline = Pipeline([
+                    ('preprocessor', preprocessor),
+                    ('regressor', nn_model)
+                ])
+                n_epochs = 50
+                mard_epochs = []
+                sigma_epochs = []
+                for epoch in range(n_epochs):
+                    nn_pipeline.fit(X_train, y_train)
+                    y_pred_epoch = nn_pipeline.predict(X_val)
+                    mard_epoch = compute_mard(y_val.values, y_pred_epoch)
+                    sigma_epoch = compute_sigma_level(y_val.values, y_pred_epoch, TEa=15)
+                    mard_epochs.append(mard_epoch)
+                    sigma_epochs.append(sigma_epoch)
+                    logging.info(f"Epoch {epoch+1}/{n_epochs} - MARD: {mard_epoch:.5f}% - Sigma Level: {sigma_epoch:.5f}")
+                
+                # Plot the evolution of these metrics over epochs.
+                plt.figure(figsize=(10, 6))
+                plt.plot(range(1, n_epochs+1), mard_epochs, marker='o', label="MARD")
+                plt.xlabel("Epoch")
+                plt.ylabel("MARD (%)")
+                plt.title("MARD over Epochs (Neural Network)")
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+
+                plt.figure(figsize=(10, 6))
+                plt.plot(range(1, n_epochs+1), sigma_epochs, marker='o', label="Sigma Level", color='orange')
+                plt.xlabel("Epoch")
+                plt.ylabel("Sigma Level")
+                plt.title("Sigma Level over Epochs (Neural Network)")
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+            
             if r2 > best_score:
                 best_score = r2
                 best_estimator = search.best_estimator_
