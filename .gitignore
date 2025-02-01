@@ -1,0 +1,24 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore dataset and image files
+eye_glucose_data/images/
+
+# Ignore VS Code settings and environment files
+.vscode/
+.env
+.DS_Store
+
+# Ignore Jupyter notebook checkpoints (if used)
+.ipynb_checkpoints/
+
+# Ignore logs and debug files
+logs/
+*.log
+
+# Ignore virtual environments
+venv/
+.env/
