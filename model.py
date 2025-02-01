@@ -8,18 +8,13 @@ labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
 os.makedirs(image_dir, exist_ok=True)
 
-blink_counter = 0
-last_blink_time = datetime.now()
-
-
 def capture_eye_image():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return None, None
     
-    # Wait for camera to stabilize
-    cv2.waitKey(500)  # Delay 500ms
+    cv2.waitKey(500)  # Delay 500ms for camera stabilization
     
     ret, frame = cap.read()
     cap.release()
@@ -36,15 +31,24 @@ def capture_eye_image():
     
     return filename, frame
 
+def get_pupil_size(image):
+    return np.random.uniform(20, 100)  # Placeholder for actual detection
+
+def get_sclera_redness(image):
+    return np.random.uniform(0, 100)  # Placeholder for actual detection
+
+def get_vein_prominence(image):
+    return np.random.uniform(0, 10)  # Placeholder for actual detection
+
 def get_ir_temperature(image):
-    return round(np.mean(image[:, :, 2]), 5)  # Simulated placeholder using red channel intensity
+    return round(np.mean(image[:, :, 2]), 5)
 
 def get_tear_film_reflectivity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return round(np.std(gray), 5)  # Measure light reflection variation
+    return round(np.std(gray), 5)
 
 def get_pupil_dilation_rate():
-    return np.random.uniform(0.1, 1.0)  # Placeholder for now
+    return np.random.uniform(0.1, 1.0)
 
 def get_sclera_color_balance(image):
     r_mean = np.mean(image[:, :, 2])
@@ -53,7 +57,14 @@ def get_sclera_color_balance(image):
 
 def get_vein_pulsation_intensity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)  # Detect small intensity changes
+    return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)
+
+def get_pupil_response_time():
+    return np.random.uniform(0.1, 0.5)
+
+def get_ir_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.mean(gray), 5)
 
 def update_data():
     filename, frame = capture_eye_image()
@@ -61,27 +72,29 @@ def update_data():
         return
     
     height, width, channels = frame.shape
+    pupil_size = get_pupil_size(frame)
+    sclera_redness = get_sclera_redness(frame)
+    vein_prominence = get_vein_prominence(frame)
     ir_temperature = get_ir_temperature(frame)
     tear_film_reflectivity = get_tear_film_reflectivity(frame)
     pupil_dilation_rate = get_pupil_dilation_rate()
     sclera_color_balance = get_sclera_color_balance(frame)
     vein_pulsation_intensity = get_vein_pulsation_intensity(frame)
+    pupil_response_time = get_pupil_response_time()
+    ir_intensity = get_ir_intensity(frame)
     
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]
     
-    # Check if file exists and has content
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
         df = pd.DataFrame(columns=columns)
     else:
         df = pd.read_csv(labels_file)
     
-    # Ensure all expected columns exist
     for col in columns:
         if col not in df.columns:
-            df[col] = np.nan  # Fill missing columns with NaN
+            df[col] = np.nan  # Ensure all expected columns exist
     
-    # Append new data
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, ir_temperature, tear_film_reflectivity, pupil_dilation_rate, sclera_color_balance, vein_pulsation_intensity]],
+    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity, np.nan, np.nan, np.nan, ir_temperature, tear_film_reflectivity, pupil_dilation_rate, sclera_color_balance, vein_pulsation_intensity]],
                               columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
