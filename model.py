@@ -36,69 +36,24 @@ def capture_eye_image():
     
     return filename, frame
 
-def detect_pupil(image):
+def get_ir_temperature(image):
+    return round(np.mean(image[:, :, 2]), 5)  # Simulated placeholder using red channel intensity
+
+def get_tear_film_reflectivity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)  # Enhance contrast
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
-    
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        largest_circle = max(circles[0], key=lambda x: x[2])  # Select the largest detected circle
-        print(f"Detected pupil with radius: {largest_circle[2]}")
-        return largest_circle[2]  # Return pupil radius
-    
-    print("No pupil detected.")
-    return 0.0
+    return round(np.std(gray), 5)  # Measure light reflection variation
 
-def get_pupil_circularity(image):
+def get_pupil_dilation_rate():
+    return np.random.uniform(0.1, 1.0)  # Placeholder for now
+
+def get_sclera_color_balance(image):
+    r_mean = np.mean(image[:, :, 2])
+    g_mean = np.mean(image[:, :, 1])
+    return round(r_mean / g_mean, 5) if g_mean > 0 else 1.0
+
+def get_vein_pulsation_intensity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
-    if circles is not None:
-        largest_circle = max(circles[0], key=lambda x: x[2])
-        area = np.pi * (largest_circle[2] ** 2)
-        perimeter = 2 * np.pi * largest_circle[2]
-        circularity = (4 * np.pi * area) / (perimeter ** 2)
-        return round(circularity, 5)
-    return 0.0
-
-def get_sclera_redness(image):
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_red = np.array([0, 50, 50])
-    upper_red = np.array([10, 255, 255])
-    mask = cv2.inRange(hsv, lower_red, upper_red)
-    redness_intensity = round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 5)
-    return redness_intensity
-
-def get_vein_prominence(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 30, 100)  # Lowered threshold for finer details
-    vein_density = round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
-    return vein_density
-
-def get_pupil_response_time():
-    return np.random.uniform(0.1, 0.4)  # Simulated placeholder value
-
-def get_ir_intensity(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    ir_intensity = np.mean(gray)  # Average pixel intensity as a rough IR measure
-    return round(ir_intensity, 5)
-
-def get_scleral_vein_density(image):
-    red_channel = image[:, :, 2]  # Extract red channel
-    edges = cv2.Canny(red_channel, 30, 100)  # Detect blood vessel edges in sclera
-    vein_density = round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
-    return vein_density
-
-def detect_blink():
-    global blink_counter, last_blink_time
-    current_time = datetime.now()
-    time_diff = (current_time - last_blink_time).total_seconds()
-    if time_diff > 2:  # Assume blink occurs every ~2 seconds
-        blink_counter += 1
-        last_blink_time = current_time
-    return blink_counter
+    return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)  # Detect small intensity changes
 
 def update_data():
     filename, frame = capture_eye_image()
@@ -106,16 +61,13 @@ def update_data():
         return
     
     height, width, channels = frame.shape
-    pupil_size = detect_pupil(frame)
-    pupil_circularity = get_pupil_circularity(frame)
-    sclera_redness = get_sclera_redness(frame)
-    vein_prominence = get_vein_prominence(frame)
-    scleral_vein_density = get_scleral_vein_density(frame)
-    pupil_response_time = get_pupil_response_time()
-    ir_intensity = get_ir_intensity(frame)
-    blink_rate = detect_blink()
+    ir_temperature = get_ir_temperature(frame)
+    tear_film_reflectivity = get_tear_film_reflectivity(frame)
+    pupil_dilation_rate = get_pupil_dilation_rate()
+    sclera_color_balance = get_sclera_color_balance(frame)
+    vein_pulsation_intensity = get_vein_pulsation_intensity(frame)
     
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "pupil_circularity", "sclera_redness", "vein_prominence", "scleral_vein_density", "pupil_response_time", "ir_intensity", "blink_rate"]
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]
     
     # Check if file exists and has content
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
@@ -129,7 +81,7 @@ def update_data():
             df[col] = np.nan  # Fill missing columns with NaN
     
     # Append new data
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, pupil_circularity, sclera_redness, vein_prominence, scleral_vein_density, pupil_response_time, ir_intensity, blink_rate]],
+    new_entry = pd.DataFrame([[filename, "", height, width, channels, ir_temperature, tear_film_reflectivity, pupil_dilation_rate, sclera_color_balance, vein_pulsation_intensity]],
                               columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)

@@ -18,7 +18,7 @@ def remove_outliers(df):
     IQR = Q3 - Q1
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-    df_filtered = df[(df["blood_glucose"] >= lower_bound) & (df["blood_glucose"] <= upper_bound)]
+    df_filtered = df[(df["blood_glucose"] >= lower_bound) & (df["blood_glucose"] <= upper_bound)].copy()
     print(f"Outliers removed. Dataset reduced from {len(df)} to {len(df_filtered)} rows.")
     return df_filtered
 
@@ -30,10 +30,23 @@ def train_model(use_neural_network=False):
     df = pd.read_csv(labels_file)
     
     # Fill missing values
-    df.fillna({"vein_prominence": 0.0, "pupil_response_time": 0.2, "ir_intensity": 0.0, "pupil_circularity": 1.0, "scleral_vein_density": 0.0, "blink_rate": 0.0}, inplace=True)
+    df.fillna({
+        "vein_prominence": 0.0, 
+        "pupil_response_time": 0.2, 
+        "ir_intensity": 0.0, 
+        "pupil_circularity": 1.0, 
+        "scleral_vein_density": 0.0, 
+        "blink_rate": 0.0, 
+        "ir_temperature": 0.0, 
+        "tear_film_reflectivity": 0.0, 
+        "pupil_dilation_rate": 0.5, 
+        "sclera_color_balance": 1.0, 
+        "vein_pulsation_intensity": 0.0
+    }, inplace=True)
     
     # Remove outliers
     df = remove_outliers(df)
+
     print(f"Dataset size after cleaning: {len(df)} rows")
     
     if len(df) < 5:
@@ -41,15 +54,20 @@ def train_model(use_neural_network=False):
         return
     
     df["blood_glucose"] = df["blood_glucose"].astype(float)
-    X = df[["pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate"]]
+    X = df[[ "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]]
     y = df["blood_glucose"]
     
-    # Remove constant features (features that don't change)
+    # Remove constant features
     constant_features = [col for col in X.columns if X[col].nunique() == 1]
     if constant_features:
         print(f"Removing constant features: {constant_features}")
-        X.drop(columns=constant_features, inplace=True)
+        X = X.drop(columns=constant_features).copy()  # Use .copy() to avoid SettingWithCopyWarning
     
+    # Check for NaN values before training
+    if X.isnull().sum().sum() > 0:
+        print("⚠️ Warning: Training data contains NaN values! Filling missing values now.")
+        X.fillna(0, inplace=True)
+
     test_size = 0.2 if len(df) > 10 else 0.0  # Only split if enough data
     if test_size == 0.0:
         X_train, y_train = X, y
@@ -72,11 +90,11 @@ def train_model(use_neural_network=False):
     else:
         model = LinearRegression()
         model.fit(X_train, y_train)
-    
+
     predictions = model.predict(X_test)
     mse = mean_squared_error(y_test, predictions)
     r2 = r2_score(y_test, predictions)  # Calculate R² score
-    
+
     print(f"Model trained. MSE: {mse:.10f}")
     print(f"Model trained. R² Score: {r2:.5f}")  # Display R² Score
     
