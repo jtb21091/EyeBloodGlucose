@@ -91,7 +91,7 @@ def live_eye_analysis():
         
         predicted_glucose = predict_blood_glucose(**feature_values)
         
-        display_text = f"Pupil: {feature_values['pupil_size']}, Redness: {feature_values['sclera_redness']}, Glucose: {predicted_glucose}"
+        display_text = f"Glucose: {predicted_glucose}"
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         cv2.imshow("Eye Glucose Monitor", frame)
