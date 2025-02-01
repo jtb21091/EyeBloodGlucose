@@ -1,17 +1,3 @@
-
-# Configure logging
-import logging
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def log_features(features):
-    logging.info(f"Extracted Features: {features}")
-    missing_features = [f for f in FEATURES_ORDER if f not in features]
-    extra_features = [f for f in features if f not in FEATURES_ORDER]
-    if missing_features:
-        logging.warning(f"Missing Features: {missing_features}")
-    if extra_features:
-        logging.warning(f"Unexpected Extra Features: {extra_features}")
 import os
 import cv2
 import pandas as pd
@@ -26,19 +12,27 @@ from dataclasses import dataclass
 
 # Define the expected feature order (must match training, ignoring the first two columns)
 FEATURES_ORDER = [
-    "pupil_size",
-    "sclera_redness",
-    "vein_prominence",
-    "pupil_response_time",
-    "ir_intensity",
-    "pupil_circularity",
-    "scleral_vein_density",
-    "ir_temperature",
-    "tear_film_reflectivity",
-    "pupil_dilation_rate",
-    "sclera_color_balance",
-    "vein_pulsation_intensity"
+    'pupil_size',
+    'sclera_redness',
+    'vein_prominence',
+    'pupil_response_time',
+    'ir_intensity',
+    'pupil_circularity',
+    'scleral_vein_density',
+    'ir_temperature',
+    'tear_film_reflectivity',
+    'pupil_dilation_rate',
+    'sclera_color_balance',
+    'vein_pulsation_intensity',
+    'birefringence_index'
 ]
+
+def get_birefringence_index(image):
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return round(np.var(gray) / 255.0, 5)  # Normalized variance as an index
+    except Exception:
+        return 0.0  # Default fallback value
 
 # ---------------------------
 # Feature Extraction Functions
@@ -84,6 +78,11 @@ def get_scleral_vein_density(image):
     edges = cv2.Canny(gray, 50, 150)
     return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
 
+def get_pupil_circularity(image):
+    # Dummy implementation for pupil circularity.
+    # Replace with your actual calculation if available.
+    return np.random.uniform(0.0, 1.0)
+
 # ---------------------------
 # Main Prediction Code
 # ---------------------------
@@ -100,14 +99,20 @@ class EyeGlucoseMonitor:
     def __init__(self, model_path: str = "eye_glucose_model.pkl"):
         self.model_path = model_path
         self.model = self._load_model()
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
         self.eye_cascades = {
-            "left": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'),
-            "right": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
+            "left": cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'
+            ),
+            "right": cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml'
+            )
         }
         self.last_prediction_time = time.time()
         self.last_valid_detection_time = time.time()  # For hysteresis
-        self.invalid_detection_threshold = 3.0         # seconds without valid detection before clearing reading
+        self.invalid_detection_threshold = 3.0         # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
         self.latest_prediction = None
         self.glucose_buffer = deque(maxlen=60)
@@ -119,7 +124,7 @@ class EyeGlucoseMonitor:
             try:
                 model = joblib.load(self.model_path)
                 return model
-            except Exception as e:
+            except Exception:
                 return None
         else:
             return None
@@ -128,17 +133,25 @@ class EyeGlucoseMonitor:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
-        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60))
+        faces = self.face_cascade.detectMultiScale(
+            enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60)
+        )
         if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50))
+            faces = self.face_cascade.detectMultiScale(
+                blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50)
+            )
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
         if len(faces) > 0:
             face = max(faces, key=lambda r: r[2] * r[3])
             x, y, w, h = face
             face_roi = enhanced[y:y+h, x:x+w]
-            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
-            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            left_eyes = self.eye_cascades["left"].detectMultiScale(
+                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
+            )
+            right_eyes = self.eye_cascades["right"].detectMultiScale(
+                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
+            )
             if ir_intensity < self.MIN_IR_INTENSITY:
                 detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True)
             else:
@@ -153,22 +166,22 @@ class EyeGlucoseMonitor:
         return detection
 
     def extract_features(self, frame: np.ndarray) -> Dict:
-        height, width, channels = frame.shape
         features = {
             "pupil_size": get_pupil_size(frame),
             "sclera_redness": get_sclera_redness(frame),
             "vein_prominence": get_vein_prominence(frame),
             "pupil_response_time": get_pupil_response_time(),
             "ir_intensity": get_ir_intensity(frame),
-            "pupil_circularity": 0.5,  # Default numeric value; adjust as needed
+            "pupil_circularity": get_pupil_circularity(frame),
             "scleral_vein_density": get_scleral_vein_density(frame),
             "ir_temperature": get_ir_temperature(frame),
             "tear_film_reflectivity": get_tear_film_reflectivity(frame),
             "pupil_dilation_rate": get_pupil_dilation_rate(),
             "sclera_color_balance": get_sclera_color_balance(frame),
-            "vein_pulsation_intensity": get_vein_pulsation_intensity(frame)
+            "vein_pulsation_intensity": get_vein_pulsation_intensity(frame),
+            "birefringence_index": get_birefringence_index(frame)
         }
-        ordered_features = {key: features[key] for key in FEATURES_ORDER}
+        ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
         return ordered_features
 
     def predict_glucose(self, features: Dict):
@@ -181,7 +194,7 @@ class EyeGlucoseMonitor:
                     result = prediction[0]
                     if result is None or (isinstance(result, float) and np.isnan(result)):
                         result = None
-        except Exception as e:
+        except Exception:
             result = None
 
         if result is not None:
