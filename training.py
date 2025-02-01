@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 
 labels_file = "eye_glucose_data/labels.csv"
 model_file = "eye_glucose_model.pkl"
@@ -21,9 +22,9 @@ def remove_outliers(df):
     IQR = Q3 - Q1
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-    df_filtered = df[(df["blood_glucose"] >= lower_bound) & (df["blood_glucose"] <= upper_bound)].copy()
-    print(f"Outliers removed. Dataset reduced from {len(df)} to {len(df_filtered)} rows.")
-    return df_filtered
+    df["blood_glucose"] = df["blood_glucose"].clip(lower=lower_bound, upper=upper_bound)
+    print(f"Outliers clipped using IQR method.")
+    return df
 
 def train_model():
     if not os.path.exists(labels_file):
@@ -52,6 +53,10 @@ def train_model():
     imputer = SimpleImputer(strategy='median')
     X = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
     
+    # Apply feature scaling
+    scaler = StandardScaler()
+    X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+    
     test_size = 0.2 if len(df) > 10 else 0.0
     if test_size == 0.0:
         X_train, y_train = X, y
@@ -63,7 +68,7 @@ def train_model():
         "Linear Regression": LinearRegression(),
         "Ridge Regression": Ridge(alpha=1.0),
         "Lasso Regression": Lasso(alpha=0.1),
-        "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True, early_stopping=True, validation_fraction=0.2, n_iter_no_change=10),
+        "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=1000, random_state=42, verbose=True, early_stopping=True, validation_fraction=0.2, n_iter_no_change=10, learning_rate_init=0.001, alpha=0.01),
         "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
         "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
         "Support Vector Regression": SVR(kernel='rbf', C=100, gamma=0.1)
