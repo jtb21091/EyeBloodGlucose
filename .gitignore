@@ -25,3 +25,4 @@ venv/
 
 ## Ignore training 
 *.pkl
+*.mlmodel

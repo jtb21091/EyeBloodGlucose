@@ -12,8 +12,16 @@ from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
+# Try importing Core ML, if unavailable, use regular model saving
+try:
+    import coremltools as ct
+    coreml_available = True
+except ModuleNotFoundError:
+    print("⚠️ Warning: Core ML Tools is not installed. Install it using `pip install coremltools`.")
+    coreml_available = False
+
 labels_file = "eye_glucose_data/labels.csv"
-model_file = "eye_glucose_model.pkl"
+model_file = "eye_glucose_model.mlmodel" if coreml_available else "eye_glucose_model.pkl"
 
 def remove_outliers(df):
     """Removes outliers using the Interquartile Range (IQR)."""
@@ -32,7 +40,6 @@ def train_model():
         return
     
     df = pd.read_csv(labels_file)
-    
     df = remove_outliers(df)
     
     if len(df) < 5:
@@ -43,17 +50,14 @@ def train_model():
     X = df.drop(columns=["blood_glucose"])
     y = df["blood_glucose"]
     
-    # Ensure all features are numeric
     non_numeric_cols = X.select_dtypes(exclude=['number']).columns
     if len(non_numeric_cols) > 0:
         print(f"⚠️ Warning: Found non-numeric columns: {list(non_numeric_cols)}")
-        X = X.drop(columns=non_numeric_cols)  # Drop non-numeric columns
+        X = X.drop(columns=non_numeric_cols)
     
-    # Use median imputation for missing values
     imputer = SimpleImputer(strategy='median')
     X = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
     
-    # Apply feature scaling
     scaler = StandardScaler()
     X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
     
@@ -101,8 +105,13 @@ def train_model():
     
     print(f"Best Model: {best_model.__class__.__name__} with R² Score: {best_score:.5f}")
     
-    joblib.dump(best_model, model_file)
-    print(f"Best model saved to {model_file}")
+    if coreml_available:
+        coreml_model = ct.converters.sklearn.convert(best_model)
+        coreml_model.save(model_file)
+        print(f"Best model saved as Core ML model to {model_file}")
+    else:
+        joblib.dump(best_model, "eye_glucose_model.pkl")
+        print(f"Best model saved as a standard pickle file.")
 
 if __name__ == "__main__":
     train_model()
