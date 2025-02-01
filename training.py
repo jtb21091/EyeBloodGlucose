@@ -31,12 +31,6 @@ def train_model():
     
     df = pd.read_csv(labels_file)
     
-    # Check for missing values before filling
-    missing_counts = df.isnull().sum()
-    print("Missing values per column before filling:")
-    print(missing_counts[missing_counts > 0])
-    
-    # Fill missing values
     df.fillna({
         "vein_prominence": 0.0, 
         "pupil_response_time": 0.2, 
@@ -51,47 +45,37 @@ def train_model():
         "vein_pulsation_intensity": 0.0
     }, inplace=True)
     
-    # Log if any values are still missing
-    remaining_missing = df.isnull().sum()
-    print("Missing values per column after filling:")
-    print(remaining_missing[remaining_missing > 0])
-    
-    # Remove outliers
     df = remove_outliers(df)
-    print(f"Dataset size after cleaning: {len(df)} rows")
     
     if len(df) < 5:
         print(f"Not enough data to train (found {len(df)} rows). Need at least 5 rows.")
         return
     
     df["blood_glucose"] = df["blood_glucose"].astype(float)
-    X = df[[ "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]]
+    X = df.drop(columns=["blood_glucose"])
     y = df["blood_glucose"]
     
-    # Remove constant features
-    constant_features = [col for col in X.columns if X[col].nunique() == 1]
-    if constant_features:
-        print(f"Removing constant features: {constant_features}")
-        X = X.drop(columns=constant_features).copy()
+    # Ensure all features are numeric
+    non_numeric_cols = X.select_dtypes(exclude=['number']).columns
+    if len(non_numeric_cols) > 0:
+        print(f"⚠️ Warning: Found non-numeric columns: {list(non_numeric_cols)}")
+        X = X.drop(columns=non_numeric_cols)  # Drop non-numeric columns
     
-    # Check for NaN values before training
-    if X.isnull().sum().sum() > 0:
-        print("⚠️ Warning: Training data contains NaN values! Filling missing values now.")
-        X.fillna(0, inplace=True)
-
-    test_size = 0.2 if len(df) > 10 else 0.0  # Only split if enough data
+    # Fill any remaining NaN values with 0
+    X.fillna(0, inplace=True)
+    
+    test_size = 0.2 if len(df) > 10 else 0.0
     if test_size == 0.0:
         X_train, y_train = X, y
-        X_test, y_test = X, y  # Evaluate on the same data
+        X_val, y_val = X, y
     else:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42)
     
-    # Train Multiple Models
     models = {
         "Linear Regression": LinearRegression(),
         "Ridge Regression": Ridge(alpha=1.0),
         "Lasso Regression": Lasso(alpha=0.1),
-        "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True),
+        "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True, early_stopping=True, validation_fraction=0.2, n_iter_no_change=10),
         "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
         "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
         "Support Vector Regression": SVR(kernel='rbf', C=100, gamma=0.1)
@@ -103,16 +87,19 @@ def train_model():
     for name, model in models.items():
         print(f"Training {name}...")
         model.fit(X_train, y_train)
-        predictions = model.predict(X_test)
-        mse = mean_squared_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
+        predictions = model.predict(X_val)
+        mse = mean_squared_error(y_val, predictions)
+        r2 = r2_score(y_val, predictions)
         print(f"{name} - MSE: {mse:.10f}, R² Score: {r2:.5f}")
         
         if name == "Neural Network":
-            plt.plot(model.loss_curve_)
+            plt.plot(model.loss_curve_, label="Training Loss")
+            if hasattr(model, "validation_scores_"):
+                plt.plot(model.validation_scores_, label="Validation Loss")
             plt.xlabel("Iterations")
-            plt.ylabel("Training Loss")
-            plt.title("Neural Network Training Loss Curve")
+            plt.ylabel("Loss")
+            plt.title("Neural Network Training and Validation Loss Curve")
+            plt.legend()
             plt.show()
         
         if r2 > best_score:
