@@ -1,0 +1,331 @@
+import os
+import cv2
+import pandas as pd
+import numpy as np
+import joblib
+import matplotlib.pyplot as plt
+import requests  # For downloading the model file
+import logging   # For logging messages
+from datetime import datetime
+from collections import deque
+from typing import Dict, Any
+import threading
+import time
+from dataclasses import dataclass
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Define the expected feature order (must match training, ignoring the first two columns)
+FEATURES_ORDER = [
+    'pupil_size',
+    'sclera_redness',
+    'vein_prominence',
+    'pupil_response_time',
+    'ir_intensity',
+    'scleral_vein_density',
+    'ir_temperature',
+    'tear_film_reflectivity',
+    'pupil_dilation_rate',
+    'sclera_color_balance',
+    'vein_pulsation_intensity',
+    'birefringence_index'
+]
+
+def get_birefringence_index(image):
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return round(np.var(gray) / 255.0, 5)  # Normalized variance as an index
+    except Exception:
+        return 0.0  # Default fallback value
+
+# ---------------------------
+# Feature Extraction Functions
+# (Replace these dummy implementations with your real ones if available)
+# ---------------------------
+def get_pupil_size(image):
+    return np.random.uniform(20, 100)
+
+def get_sclera_redness(image):
+    return np.random.uniform(0, 100)
+
+def get_vein_prominence(image):
+    return np.random.uniform(0, 10)
+
+def get_ir_temperature(image):
+    # For demonstration, we compute IR temperature from the mean of the red channel.
+    return round(np.mean(image[:, :, 2]), 5)
+
+def get_tear_film_reflectivity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.std(gray), 5)
+
+def get_pupil_dilation_rate():
+    return np.random.uniform(0.1, 1.0)
+
+def get_sclera_color_balance(image):
+    r_mean = np.mean(image[:, :, 2])
+    g_mean = np.mean(image[:, :, 1])
+    return round(r_mean / g_mean, 5) if g_mean > 0 else 1.0
+
+def get_vein_pulsation_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)
+
+def get_pupil_response_time():
+    return np.random.uniform(0.1, 0.5)
+
+def get_ir_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.mean(gray), 5)
+
+def get_scleral_vein_density(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
+
+# ---------------------------
+# DataClass for Detection
+# ---------------------------
+@dataclass
+class EyeDetection:
+    left_eye: Any          # Detected left eye bounding boxes.
+    right_eye: Any         # Detected right eye bounding boxes.
+    ir_intensity: float    # Mean intensity of the grayscale frame.
+    timestamp: datetime
+    is_valid: bool         # Whether a valid face was detected.
+    eyes_open: bool        # Whether the eyes are considered "open" (or forced open in dark).
+    face_rect: tuple = None  # The bounding box of the detected face (x, y, w, h)
+
+# ---------------------------
+# Main Prediction Code
+# ---------------------------
+class EyeGlucoseMonitor:
+    def __init__(self, model_path: str = "eye_glucose_model.pkl"):
+        self.model_path = model_path
+        
+        # NOTE: Update the URL below to point to your actual direct download link for the model.
+        self.model_url = "https://github.com/jtb21091/testrelease/releases/download/2/eye_glucose_model.pkl"
+        
+        self.model = self._load_model()
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        self.eye_cascades = {
+            "left": cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'
+            ),
+            "right": cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml'
+            )
+        }
+        self.last_prediction_time = time.time()
+        self.last_valid_detection_time = time.time()  # For hysteresis
+        self.invalid_detection_threshold = 3.0         # Seconds without valid detection before clearing reading
+        self.prediction_lock = threading.Lock()
+        
+        # NOTE: Adjust the running average buffer size here.
+        # The following deque will store the last 60 predictions for running average computation.
+        self.glucose_buffer = deque(maxlen=60)
+        
+        self.latest_prediction = None
+        self.MIN_EYE_ASPECT_RATIO = 0.2  # If computed ratio is above this, eyes are open.
+        self.MIN_IR_INTENSITY = 30       # Threshold below which conditions are considered "dark."
+
+    def _download_model(self) -> None:
+        """
+        Download the latest model file from the provided URL and save it locally.
+        """
+        try:
+            logging.info(f"Downloading model from {self.model_url} ...")
+            response = requests.get(self.model_url, stream=True)
+            response.raise_for_status()  # Raise an error for bad status codes
+            
+            # Log content type to check if we are getting a binary file
+            content_type = response.headers.get("Content-Type")
+            logging.info(f"Response Content-Type: {content_type}")
+            
+            with open(self.model_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            file_size = os.path.getsize(self.model_path)
+            logging.info(f"Downloaded file size: {file_size} bytes")
+            logging.info("Downloaded the latest model successfully.")
+        except Exception as e:
+            logging.error(f"Failed to download model: {e}")
+
+    def _load_model(self) -> Any:
+        """
+        Load the model from disk. If the model file does not exist, download the latest release.
+        """
+        if not os.path.exists(self.model_path):
+            logging.info("Model file not found locally. Attempting to download the latest release package...")
+            self._download_model()
+        if os.path.exists(self.model_path):
+            try:
+                model = joblib.load(self.model_path)
+                return model
+            except Exception as e:
+                logging.error(f"Error loading model: {e}")
+                return None
+        else:
+            logging.error("Model file still not found after download attempt.")
+            return None
+
+    def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        ir_intensity = np.mean(gray)
+        enhanced = cv2.equalizeHist(gray)
+        faces = self.face_cascade.detectMultiScale(
+            enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60)
+        )
+        # Try with a blurred image if no faces found under dark conditions.
+        if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
+            blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+            faces = self.face_cascade.detectMultiScale(
+                blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50)
+            )
+        detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
+        if len(faces) > 0:
+            # Choose the largest face
+            face = max(faces, key=lambda r: r[2] * r[3])
+            x, y, w, h = face
+            detection.face_rect = face  # Save the face bounding box
+            face_roi = enhanced[y:y+h, x:x+w]
+            left_eyes = self.eye_cascades["left"].detectMultiScale(
+                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
+            )
+            right_eyes = self.eye_cascades["right"].detectMultiScale(
+                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
+            )
+            # Decide if eyes are detected.
+            if ir_intensity < self.MIN_IR_INTENSITY:
+                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
+            else:
+                if len(left_eyes) > 0 or len(right_eyes) > 0:
+                    ear_list = []
+                    for (ex, ey, ew, eh) in (list(left_eyes) + list(right_eyes)):
+                        ratio = eh / ew if ew > 0 else 0
+                        ear_list.append(ratio)
+                    avg_ear = np.mean(ear_list) if ear_list else 0
+                    eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
+                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
+        return detection
+
+    def extract_features(self, frame: np.ndarray) -> Dict:
+        """
+        Extract features only from the eye region.
+        If no eyes are detected, returns an empty dictionary.
+        """
+        detection = self.detect_face_and_eyes(frame)
+        # Check for valid detection with at least one eye detected.
+        if not detection.is_valid or (len(detection.left_eye) == 0 and len(detection.right_eye) == 0):
+            return {}
+        if detection.face_rect is None:
+            return {}
+
+        # Get the face region (in original frame coordinates)
+        fx, fy, fw, fh = detection.face_rect
+        face_roi = frame[fy:fy+fh, fx:fx+fw]
+
+        # Convert the detected eye boxes (which are relative to the face ROI) into a union ROI.
+        eye_boxes = []
+        for (ex, ey, ew, eh) in detection.left_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        for (ex, ey, ew, eh) in detection.right_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        if not eye_boxes:
+            return {}
+        ex_min = min(box[0] for box in eye_boxes)
+        ey_min = min(box[1] for box in eye_boxes)
+        ex_max = max(box[2] for box in eye_boxes)
+        ey_max = max(box[3] for box in eye_boxes)
+        # These coordinates are relative to the face ROI.
+        # Convert them to original frame coordinates.
+        eye_roi_x = fx + ex_min
+        eye_roi_y = fy + ey_min
+        eye_roi_w = ex_max - ex_min
+        eye_roi_h = ey_max - ey_min
+
+        # Ensure the ROI is within frame bounds.
+        eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
+
+        # Extract features from the cropped eye region.
+        features = {
+            "pupil_size": get_pupil_size(eye_roi),
+            "sclera_redness": get_sclera_redness(eye_roi),
+            "vein_prominence": get_vein_prominence(eye_roi),
+            "pupil_response_time": get_pupil_response_time(),
+            "ir_intensity": get_ir_intensity(eye_roi),
+            "scleral_vein_density": get_scleral_vein_density(eye_roi),
+            "ir_temperature": get_ir_temperature(eye_roi),
+            "tear_film_reflectivity": get_tear_film_reflectivity(eye_roi),
+            "pupil_dilation_rate": get_pupil_dilation_rate(),
+            "sclera_color_balance": get_sclera_color_balance(eye_roi),
+            "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
+            "birefringence_index": get_birefringence_index(eye_roi)
+        }
+        ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
+        return ordered_features
+
+    def predict_glucose(self, features: Dict):
+        result = None
+        try:
+            if self.model is not None and features:
+                df = pd.DataFrame([features])
+                prediction = self.model.predict(df)
+                if len(prediction) > 0:
+                    result = prediction[0]
+                    if result is None or (isinstance(result, float) and np.isnan(result)):
+                        result = None
+        except Exception:
+            result = None
+
+        if result is not None:
+            with self.prediction_lock:
+                self.glucose_buffer.append(result)
+                # Running average computed over the buffer.
+                self.latest_prediction = np.mean(self.glucose_buffer)
+
+    def run(self):
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Could not open webcam.")
+            return
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            current_time = time.time()
+            detection = self.detect_face_and_eyes(frame)
+            # Only proceed if a valid face with detected eyes is found.
+            if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
+                self.last_valid_detection_time = current_time
+                
+                # NOTE: Adjust update frequency (in seconds) here.
+                # The prediction (and running average update) is performed once every 1 second.
+                if current_time - self.last_prediction_time >= 1.0:
+                    self.last_prediction_time = current_time
+                    features = self.extract_features(frame)
+                    self.predict_glucose(features)
+            else:
+                if current_time - self.last_valid_detection_time > self.invalid_detection_threshold:
+                    with self.prediction_lock:
+                        self.latest_prediction = None
+
+            with self.prediction_lock:
+                text = f"{self.latest_prediction:.1f} mg/dL" if self.latest_prediction is not None else "No Reading"
+            cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+            cv2.imshow("Blood Glucose", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    monitor = EyeGlucoseMonitor()
+    monitor.run()
