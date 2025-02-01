@@ -8,6 +8,10 @@ labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
 os.makedirs(image_dir, exist_ok=True)
 
+blink_counter = 0
+last_blink_time = datetime.now()
+
+
 def capture_eye_image():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -81,6 +85,21 @@ def get_ir_intensity(image):
     ir_intensity = np.mean(gray)  # Average pixel intensity as a rough IR measure
     return round(ir_intensity, 5)
 
+def get_scleral_vein_density(image):
+    red_channel = image[:, :, 2]  # Extract red channel
+    edges = cv2.Canny(red_channel, 30, 100)  # Detect blood vessel edges in sclera
+    vein_density = round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+    return vein_density
+
+def detect_blink():
+    global blink_counter, last_blink_time
+    current_time = datetime.now()
+    time_diff = (current_time - last_blink_time).total_seconds()
+    if time_diff > 2:  # Assume blink occurs every ~2 seconds
+        blink_counter += 1
+        last_blink_time = current_time
+    return blink_counter
+
 def update_data():
     filename, frame = capture_eye_image()
     if filename is None or frame is None:
@@ -91,10 +110,12 @@ def update_data():
     pupil_circularity = get_pupil_circularity(frame)
     sclera_redness = get_sclera_redness(frame)
     vein_prominence = get_vein_prominence(frame)
+    scleral_vein_density = get_scleral_vein_density(frame)
     pupil_response_time = get_pupil_response_time()
-    ir_intensity = get_ir_intensity(frame)  # New IR measurement
+    ir_intensity = get_ir_intensity(frame)
+    blink_rate = detect_blink()
     
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "pupil_circularity", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity"]
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "pupil_circularity", "sclera_redness", "vein_prominence", "scleral_vein_density", "pupil_response_time", "ir_intensity", "blink_rate"]
     
     # Check if file exists and has content
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
@@ -108,7 +129,7 @@ def update_data():
             df[col] = np.nan  # Fill missing columns with NaN
     
     # Append new data
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, pupil_circularity, sclera_redness, vein_prominence, pupil_response_time, ir_intensity]],
+    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, pupil_circularity, sclera_redness, vein_prominence, scleral_vein_density, pupil_response_time, ir_intensity, blink_rate]],
                               columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
