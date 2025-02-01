@@ -6,12 +6,29 @@ import joblib
 from datetime import datetime
 from collections import deque
 from typing import Dict, Any
-import logging
+import threading
 import time
 from dataclasses import dataclass
 
-# Set logging level to CRITICAL to suppress terminal output.
-logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s - %(levelname)s - %(message)s')
+# Define the expected feature order (must match training, ignoring the first two columns)
+FEATURES_ORDER = [
+    "height",
+    "width",
+    "channels",
+    "pupil_size",
+    "sclera_redness",
+    "vein_prominence",
+    "pupil_response_time",
+    "ir_intensity",
+    "pupil_circularity",
+    "scleral_vein_density",
+    "blink_rate",
+    "ir_temperature",
+    "tear_film_reflectivity",
+    "pupil_dilation_rate",
+    "sclera_color_balance",
+    "vein_pulsation_intensity"
+]
 
 # ---------------------------
 # Feature Extraction Functions
@@ -60,12 +77,8 @@ def get_scleral_vein_density(image):
 # ---------------------------
 # Main Prediction Code
 # ---------------------------
-
 @dataclass
 class EyeDetection:
-    """
-    Data class for eye detection results.
-    """
     left_eye: Any          # Detected left eye bounding boxes.
     right_eye: Any         # Detected right eye bounding boxes.
     ir_intensity: float    # Mean intensity of the grayscale frame.
@@ -75,92 +88,61 @@ class EyeDetection:
 
 class EyeGlucoseMonitor:
     def __init__(self, model_path: str = "eye_glucose_model.pkl"):
-        """
-        Initialize the EyeGlucoseMonitor.
-        
-        Args:
-            model_path: Path to the trained glucose prediction model.
-        """
         self.model_path = model_path
         self.model = self._load_model()
-        # Initialize face and eye cascades.
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.eye_cascades = {
             "left": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'),
             "right": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
         }
-        # Timing and prediction variables.
         self.last_prediction_time = time.time()
         self.last_valid_detection_time = time.time()  # For hysteresis
         self.invalid_detection_threshold = 3.0         # seconds without valid detection before clearing reading
+        self.prediction_lock = threading.Lock()
         self.latest_prediction = None
         self.glucose_buffer = deque(maxlen=60)
-        # Detection parameters.
         self.MIN_EYE_ASPECT_RATIO = 0.2  # If computed ratio is above this, eyes are open.
         self.MIN_IR_INTENSITY = 30       # Threshold below which conditions are considered "dark."
 
     def _load_model(self) -> Any:
-        """
-        Load the trained model from disk.
-        
-        Returns:
-            The loaded model, or None if unavailable.
-        """
         if os.path.exists(self.model_path):
             try:
-                return joblib.load(self.model_path)
-            except Exception:
+                model = joblib.load(self.model_path)
+                return model
+            except Exception as e:
                 return None
         else:
             return None
 
     def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
-        """
-        Detect a face and eyes in the frame.
-        In dark conditions (low IR intensity), force eyes to be considered "open" even if they appear closed.
-        
-        Returns:
-            An EyeDetection object.
-        """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
-        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
-        
-        # If no face detected and conditions are dark, try alternative detection.
+        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60))
         if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=3, minSize=(80, 80))
-        
-        # Default: invalid detection.
+            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50))
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
-        
         if len(faces) > 0:
             face = max(faces, key=lambda r: r[2] * r[3])
             x, y, w, h = face
             face_roi = enhanced[y:y+h, x:x+w]
-            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20))
-            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20))
-            if len(left_eyes) > 0 or len(right_eyes) > 0:
-                # Compute a simple eye aspect ratio from detected eyes.
-                ear_list = []
-                for (ex, ey, ew, eh) in (list(left_eyes) + list(right_eyes)):
-                    ear_list.append(eh / ew if ew > 0 else 0)
-                avg_ear = np.mean(ear_list) if ear_list else 0
-                eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
-                # In dark conditions, force eyes_open True.
-                if ir_intensity < self.MIN_IR_INTENSITY:
-                    eyes_open = True
-                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open)
+            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            if ir_intensity < self.MIN_IR_INTENSITY:
+                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True)
+            else:
+                if len(left_eyes) > 0 or len(right_eyes) > 0:
+                    ear_list = []
+                    for (ex, ey, ew, eh) in (list(left_eyes) + list(right_eyes)):
+                        ratio = eh / ew if ew > 0 else 0
+                        ear_list.append(ratio)
+                    avg_ear = np.mean(ear_list) if ear_list else 0
+                    eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
+                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open)
         return detection
 
     def extract_features(self, frame: np.ndarray) -> Dict:
-        """
-        Extract the features from the frame exactly as in training.
-        
-        Returns:
-            A dictionary of features with keys matching your training data.
-        """
         height, width, channels = frame.shape
         features = {
             "height": height,
@@ -171,23 +153,19 @@ class EyeGlucoseMonitor:
             "vein_prominence": get_vein_prominence(frame),
             "pupil_response_time": get_pupil_response_time(),
             "ir_intensity": get_ir_intensity(frame),
+            "pupil_circularity": 0.5,  # Default numeric value; adjust as needed
             "scleral_vein_density": get_scleral_vein_density(frame),
-            "pupil_circularity": 0.5,  # Default numeric value (adjust as needed)
-            "blink_rate": 0.5,         # Default numeric value (adjust as needed)
+            "blink_rate": 0.5,         # Default numeric value; adjust as needed
             "ir_temperature": get_ir_temperature(frame),
             "tear_film_reflectivity": get_tear_film_reflectivity(frame),
             "pupil_dilation_rate": get_pupil_dilation_rate(),
             "sclera_color_balance": get_sclera_color_balance(frame),
             "vein_pulsation_intensity": get_vein_pulsation_intensity(frame)
         }
-        return features
+        ordered_features = {key: features[key] for key in FEATURES_ORDER}
+        return ordered_features
 
     def predict_glucose(self, features: Dict):
-        """
-        Predict blood glucose using the extracted features.
-        If the model prediction fails (returns None or NaN), no update is made.
-        Updates the running average stored in self.latest_prediction.
-        """
         result = None
         try:
             if self.model is not None:
@@ -195,24 +173,17 @@ class EyeGlucoseMonitor:
                 prediction = self.model.predict(df)
                 if len(prediction) > 0:
                     result = prediction[0]
-                    # Check if result is a valid number
                     if result is None or (isinstance(result, float) and np.isnan(result)):
                         result = None
-        except Exception:
+        except Exception as e:
             result = None
 
-        # Only update if we got a valid result.
         if result is not None:
             with self.prediction_lock:
                 self.glucose_buffer.append(result)
                 self.latest_prediction = np.mean(self.glucose_buffer)
 
     def run(self):
-        """
-        Open the webcam feed, detect the face/eyes, extract features, and overlay the blood glucose estimate.
-        The prediction is updated once per second.
-        Implements hysteresis: if detection becomes invalid for too long, clear the reading.
-        """
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             return
@@ -226,19 +197,15 @@ class EyeGlucoseMonitor:
             detection = self.detect_face_and_eyes(frame)
             if detection.is_valid:
                 self.last_valid_detection_time = current_time
-                # Update prediction once per second.
                 if current_time - self.last_prediction_time >= 1.0:
                     self.last_prediction_time = current_time
                     features = self.extract_features(frame)
-                    # Synchronously update prediction.
                     self.predict_glucose(features)
             else:
-                # If no valid detection for longer than the threshold, clear the reading.
                 if current_time - self.last_valid_detection_time > self.invalid_detection_threshold:
                     with self.prediction_lock:
                         self.latest_prediction = None
 
-            # Overlay the blood glucose reading.
             with self.prediction_lock:
                 text = f"{self.latest_prediction:.1f} mg/dL" if self.latest_prediction is not None else "No Reading"
             cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
