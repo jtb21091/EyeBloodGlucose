@@ -32,33 +32,39 @@ class EyeGlucoseModel:
         self.model_file = model_file
         self.best_model = None
 
-    def remove_outliers(self, df, column="blood_glucose", n_std=3):
+    def remove_outliers(self, df):
         """
-        Remove outliers using both Z-score and IQR methods.
+        Remove outliers based on all variables except 'blood_glucose'.
+        If a row contains an outlier in any other variable, the entire row is removed.
         
         Args:
             df: Input DataFrame.
-            column: The column on which to perform outlier removal.
-            n_std: Number of standard deviations for the Z-score threshold.
         
         Returns:
             DataFrame with outliers removed.
         """
-        # Z-score method
-        z_scores = np.abs((df[column] - df[column].mean()) / df[column].std())
-        df_no_outliers = df[z_scores < n_std].copy()
+        df_clean = df.copy()
+        numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+        numeric_cols.remove("blood_glucose")  # Exclude blood_glucose from outlier detection
         
-        # IQR method
-        Q1 = df_no_outliers[column].quantile(0.25)
-        Q3 = df_no_outliers[column].quantile(0.75)
+        # Identify outliers using Z-score
+        z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
+        outliers_z = (z_scores > 3).any(axis=1)  # Flag rows where any variable is an outlier
+        
+        # Identify outliers using IQR
+        Q1 = df_clean[numeric_cols].quantile(0.25)
+        Q3 = df_clean[numeric_cols].quantile(0.75)
         IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        df_no_outliers[column] = df_no_outliers[column].clip(lower=lower_bound, upper=upper_bound)
+        outliers_iqr = ((df_clean[numeric_cols] < (Q1 - 1.5 * IQR)) | (df_clean[numeric_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
         
-        removed_count = len(df) - len(df_no_outliers)
-        logging.info(f"Removed {removed_count} outliers using combined Z-score and IQR methods")
-        return df_no_outliers
+        # Combine both methods to determine outliers
+        outliers_combined = outliers_z | outliers_iqr
+        df_clean = df_clean[~outliers_combined].copy()
+        
+        removed_count = len(df) - len(df_clean)
+        logging.info(f"Removed {removed_count} rows due to outliers in at least one non-blood_glucose variable")
+        
+        return df_clean
 
     def prepare_data(self):
         """
@@ -91,6 +97,8 @@ class EyeGlucoseModel:
             X = X.drop(columns=non_numeric_cols)
             
         return X, y
+
+# Additional methods remain unchanged
 
     def get_model_configurations(self):
         """
