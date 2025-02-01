@@ -31,6 +31,11 @@ def train_model():
     
     df = pd.read_csv(labels_file)
     
+    # Check for missing values before filling
+    missing_counts = df.isnull().sum()
+    print("Missing values per column before filling:")
+    print(missing_counts[missing_counts > 0])
+    
     # Fill missing values
     df.fillna({
         "vein_prominence": 0.0, 
@@ -45,6 +50,11 @@ def train_model():
         "sclera_color_balance": 1.0, 
         "vein_pulsation_intensity": 0.0
     }, inplace=True)
+    
+    # Log if any values are still missing
+    remaining_missing = df.isnull().sum()
+    print("Missing values per column after filling:")
+    print(remaining_missing[remaining_missing > 0])
     
     # Remove outliers
     df = remove_outliers(df)
