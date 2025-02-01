@@ -98,6 +98,13 @@ def train_model():
         r2 = r2_score(y_test, predictions)
         print(f"{name} - MSE: {mse:.10f}, R² Score: {r2:.5f}")
         
+        if name == "Neural Network":
+            plt.plot(model.loss_curve_)
+            plt.xlabel("Iterations")
+            plt.ylabel("Training Loss")
+            plt.title("Neural Network Training Loss Curve")
+            plt.show()
+        
         if r2 > best_score:
             best_model = model
             best_score = r2
