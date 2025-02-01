@@ -113,8 +113,12 @@ class EyeGlucoseMonitor:
         self.last_valid_detection_time = time.time()  # For hysteresis
         self.invalid_detection_threshold = 3.0         # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
+        
+        # NOTE: Adjust the running average buffer size here.
+        # The following deque will store the last 75 predictions for running average computation.
+        self.glucose_buffer = deque(maxlen=75)
+        
         self.latest_prediction = None
-        self.glucose_buffer = deque(maxlen=60)
         self.MIN_EYE_ASPECT_RATIO = 0.2  # If computed ratio is above this, eyes are open.
         self.MIN_IR_INTENSITY = 30       # Threshold below which conditions are considered "dark."
 
@@ -240,6 +244,7 @@ class EyeGlucoseMonitor:
         if result is not None:
             with self.prediction_lock:
                 self.glucose_buffer.append(result)
+                # Running average computed over the buffer.
                 self.latest_prediction = np.mean(self.glucose_buffer)
 
     def run(self):
@@ -258,6 +263,9 @@ class EyeGlucoseMonitor:
             # Only proceed if a valid face with detected eyes is found.
             if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
                 self.last_valid_detection_time = current_time
+                
+                # NOTE: Adjust update frequency (in seconds) here.
+                # The prediction (and running average update) is performed once every 1 second.
                 if current_time - self.last_prediction_time >= 1.0:
                     self.last_prediction_time = current_time
                     features = self.extract_features(frame)
