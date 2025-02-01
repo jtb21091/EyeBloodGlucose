@@ -1,3 +1,17 @@
+
+# Configure logging
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def log_features(features):
+    logging.info(f"Extracted Features: {features}")
+    missing_features = [f for f in FEATURES_ORDER if f not in features]
+    extra_features = [f for f in features if f not in FEATURES_ORDER]
+    if missing_features:
+        logging.warning(f"Missing Features: {missing_features}")
+    if extra_features:
+        logging.warning(f"Unexpected Extra Features: {extra_features}")
 import os
 import cv2
 import pandas as pd
