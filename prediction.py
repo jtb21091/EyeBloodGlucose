@@ -16,6 +16,9 @@ else:
     print("❌ Standard Model not found. Exiting.")
     exit()
 
+# Load OpenCV's pre-trained eye detection model
+eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
 def extract_features(image):
     """Extracts real-time eye features."""
     height, width = image.shape[:2]
@@ -58,33 +61,39 @@ def predict_blood_glucose(features):
         return "Error"
 
 def live_eye_analysis():
-    """Real-time eye glucose monitoring."""
+    """Real-time eye glucose monitoring with eye detection."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         return
     
     last_prediction_time = datetime.now()
-    last_displayed_glucose = None
-    glucose_prediction = "N/A"  # Ensure variable is initialized
+    last_displayed_glucose = "No eyes detected"
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        # Predict every 0.5 seconds
-        current_time = datetime.now()
-        if (current_time - last_prediction_time).total_seconds() > 0.5:
-            features = extract_features(frame)
-            new_glucose_prediction = predict_blood_glucose(features)
-            last_prediction_time = current_time
+        # Convert frame to grayscale for eye detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
-            # Only update if the value changes
-            if new_glucose_prediction != last_displayed_glucose:
-                last_displayed_glucose = new_glucose_prediction
+        if len(eyes) > 0:
+            # Predict only if eyes are detected
+            current_time = datetime.now()
+            if (current_time - last_prediction_time).total_seconds() > 0.5:
+                features = extract_features(frame)
+                glucose_prediction = predict_blood_glucose(features)
+                last_prediction_time = current_time
 
-        # Display prediction on screen
-        display_text = f"Glucose: {last_displayed_glucose} mg/dL"
+                # Only update if the value changes
+                if glucose_prediction != last_displayed_glucose:
+                    last_displayed_glucose = glucose_prediction
+        else:
+            last_displayed_glucose = "No eyes detected"
+
+        # Display prediction or warning on screen
+        display_text = f"Glucose: {last_displayed_glucose}" if isinstance(last_displayed_glucose, (int, float)) else last_displayed_glucose
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
                     0.7, (0, 255, 0), 2)
         cv2.imshow("Optimized Eye Glucose Monitor", frame)
