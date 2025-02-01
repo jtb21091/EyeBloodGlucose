@@ -5,7 +5,7 @@ import joblib
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -14,6 +14,11 @@ from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
 import logging
+
+# Additional model imports:
+from sklearn.svm import SVR                   # Support Vector Regressor
+from sklearn.neighbors import KNeighborsRegressor  # KNN Regressor
+from sklearn.tree import DecisionTreeRegressor     # Decision Tree Regressor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -146,6 +151,43 @@ class EyeGlucoseModel:
                     "activation": ["relu", "tanh"],
                     "alpha": uniform(0.0001, 0.01),
                     "learning_rate_init": uniform(0.0001, 0.01)
+                }
+            },
+            # NOTE: Added additional models below.
+            "SVR": {
+                "model": SVR(),
+                "params": {
+                    "C": uniform(0.1, 10.0),
+                    "epsilon": uniform(0.01, 0.5),
+                    "kernel": ["linear", "rbf"]
+                }
+            },
+            "KNN Regressor": {
+                "model": KNeighborsRegressor(),
+                "params": {
+                    "n_neighbors": randint(3, 20),
+                    "weights": ["uniform", "distance"]
+                }
+            },
+            "Decision Tree": {
+                "model": DecisionTreeRegressor(),
+                "params": {
+                    "max_depth": randint(3, 15),
+                    "min_samples_split": randint(2, 10),
+                    "min_samples_leaf": randint(1, 5)
+                }
+            },
+            "Stacking Regressor": {
+                "model": StackingRegressor(
+                    estimators=[
+                        ('rf', RandomForestRegressor()),
+                        ('gb', GradientBoostingRegressor())
+                    ],
+                    final_estimator=LinearRegression()
+                ),
+                "params": {
+                    # You can tune the final estimator parameters if desired.
+                    # For now, we leave it empty.
                 }
             }
         }

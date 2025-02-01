@@ -115,8 +115,8 @@ class EyeGlucoseMonitor:
         self.prediction_lock = threading.Lock()
         
         # NOTE: Adjust the running average buffer size here.
-        # The following deque will store the last 75 predictions for running average computation.
-        self.glucose_buffer = deque(maxlen=75)
+        # The following deque will store the last 60 predictions for running average computation.
+        self.glucose_buffer = deque(maxlen=60)
         
         self.latest_prediction = None
         self.MIN_EYE_ASPECT_RATIO = 0.2  # If computed ratio is above this, eyes are open.
