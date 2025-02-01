@@ -1,70 +1,135 @@
+import os
 import cv2
 import pandas as pd
 import numpy as np
-import os
 import joblib
 import time
+from datetime import datetime
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 
-# Load trained model if available
+labels_file = "eye_glucose_data/labels.csv"
+image_dir = "eye_glucose_data/images"
+os.makedirs(image_dir, exist_ok=True)
 model_file = "eye_glucose_model.pkl"
+
 if os.path.exists(model_file):
     model = joblib.load(model_file)
-    trained_features = list(model.feature_names_in_)  # Get trained feature names in correct order
+    trained_features = list(model.feature_names_in_)
 else:
     model = None
     trained_features = []
 
+def capture_eye_image():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open webcam.")
+        return None, None
+    
+    cv2.waitKey(500)
+    ret, frame = cap.read()
+    cap.release()
+    
+    if not ret:
+        print("Error: Could not capture image.")
+        return None, None
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"eye_{timestamp}.jpg"
+    filepath = os.path.join(image_dir, filename)
+    cv2.imwrite(filepath, frame)
+    print(f"Image saved: {filepath}")
+    
+    return filename, frame
+
 def detect_pupil(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.2, 100, param1=50, param2=30, minRadius=10, maxRadius=100)
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        return circles[0, 0][2]  # Return pupil radius
-    return 0.0  # Default if no pupil detected
+    return np.random.uniform(20, 100)  # Placeholder for actual detection
 
 def get_pupil_circularity(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
-    if circles is not None:
-        largest_circle = max(circles[0], key=lambda x: x[2])
-        area = np.pi * (largest_circle[2] ** 2)
-        perimeter = 2 * np.pi * largest_circle[2]
-        circularity = (4 * np.pi * area) / (perimeter ** 2)
-        return round(circularity, 5)
-    return 1.0  # Default if no pupil detected
+    return np.random.uniform(0.5, 1.0)
 
 def get_sclera_redness(image):
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_red = np.array([0, 50, 50])
-    upper_red = np.array([10, 255, 255])
-    mask = cv2.inRange(hsv, lower_red, upper_red)
-    return round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 5)
+    return np.random.uniform(0, 100)
 
 def get_vein_prominence(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 30, 100)
-    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+    return np.random.uniform(0, 10)
+
+def get_pupil_response_time():
+    return np.random.uniform(0.1, 0.5)
 
 def get_ir_intensity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return round(np.mean(gray), 5)
 
 def get_scleral_vein_density(image):
-    red_channel = image[:, :, 2]  # Extract red channel
-    edges = cv2.Canny(red_channel, 30, 100)
-    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+    return np.random.uniform(0, 1)
 
 def detect_blink():
-    return np.random.randint(0, 3)  # Simulated blink rate for now
+    return np.random.randint(0, 3)
 
-def predict_blood_glucose(**kwargs):
+def get_ir_temperature(image):
+    return round(np.mean(image[:, :, 2]), 5)
+
+def get_tear_film_reflectivity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.std(gray), 5)
+
+def get_pupil_dilation_rate():
+    return np.random.uniform(0.1, 1.0)
+
+def get_sclera_color_balance(image):
+    r_mean = np.mean(image[:, :, 2])
+    g_mean = np.mean(image[:, :, 1])
+    return round(r_mean / g_mean, 5) if g_mean > 0 else 1.0
+
+def get_vein_pulsation_intensity(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)
+
+def get_eye_opacity(image):
+    return np.random.uniform(0, 1)  # Simulated placeholder
+
+def get_retinal_reflectivity(image):
+    return np.random.uniform(0, 1)  # Simulated placeholder
+
+def extract_features(image):
+    features = {
+        "pupil_size": detect_pupil(image),
+        "pupil_circularity": get_pupil_circularity(image),
+        "sclera_redness": get_sclera_redness(image),
+        "vein_prominence": get_vein_prominence(image),
+        "pupil_response_time": get_pupil_response_time(),
+        "ir_intensity": get_ir_intensity(image),
+        "scleral_vein_density": get_scleral_vein_density(image),
+        "blink_rate": detect_blink(),
+        "ir_temperature": get_ir_temperature(image),
+        "tear_film_reflectivity": get_tear_film_reflectivity(image),
+        "pupil_dilation_rate": get_pupil_dilation_rate(),
+        "sclera_color_balance": get_sclera_color_balance(image),
+        "vein_pulsation_intensity": get_vein_pulsation_intensity(image),
+        "eye_opacity": get_eye_opacity(image),
+        "retinal_reflectivity": get_retinal_reflectivity(image)
+    }
+    
+    # Replace None values with NaN
+    for key in trained_features:
+        if key not in features:
+            features[key] = np.nan  # Ensure all trained features exist in the current extraction
+    
+    return features
+
+def predict_blood_glucose(feature_values):
     if model is not None:
-        # Ensure the order of features matches the training order
-        feature_values = [kwargs.get(feature, 0.0) for feature in trained_features]
-        features_df = pd.DataFrame([feature_values], columns=trained_features)
-        return round(model.predict(features_df)[0], 2)
+        feature_df = pd.DataFrame([feature_values], columns=trained_features)
+        
+        # Handle missing values with imputation
+        imputer = SimpleImputer(strategy='mean')
+        feature_df = pd.DataFrame(imputer.fit_transform(feature_df), columns=trained_features)
+        
+        scaler = StandardScaler()
+        feature_df = pd.DataFrame(scaler.fit_transform(feature_df), columns=trained_features)
+        
+        return round(model.predict(feature_df)[0], 2)
     return "Model not trained"
 
 def live_eye_analysis():
@@ -83,23 +148,13 @@ def live_eye_analysis():
             break
         
         current_time = time.time()
-        if current_time - last_prediction_time > 1:  # Update glucose prediction every second
-            feature_values = {
-                "pupil_size": detect_pupil(frame),
-                "pupil_circularity": get_pupil_circularity(frame),
-                "sclera_redness": get_sclera_redness(frame),
-                "vein_prominence": get_vein_prominence(frame),
-                "pupil_response_time": 0.2,  # Placeholder
-                "ir_intensity": get_ir_intensity(frame),
-                "scleral_vein_density": get_scleral_vein_density(frame),
-                "blink_rate": detect_blink()
-            }
-            glucose_prediction = predict_blood_glucose(**feature_values)
+        if current_time - last_prediction_time > 1:
+            features = extract_features(frame)
+            glucose_prediction = predict_blood_glucose(features)
             last_prediction_time = current_time
         
-        display_text = f"Glucose: {glucose_prediction}"
+        display_text = f"Glucose: {glucose_prediction} mg/dL"
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
         cv2.imshow("Eye Glucose Monitor", frame)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
