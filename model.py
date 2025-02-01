@@ -8,6 +8,9 @@ labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
 os.makedirs(image_dir, exist_ok=True)
 
+# Load the Haar cascade for eye detection (make sure the XML file path is correct)
+eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+
 def capture_eye_image():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -22,6 +25,17 @@ def capture_eye_image():
     if not ret:
         print("Error: Could not capture image.")
         return None, None
+
+    # Optionally, convert to grayscale for detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+
+    if len(eyes) == 0:
+        print("No eyes detected.")
+    else:
+        # For demonstration, draw rectangles around detected eyes
+        for (ex, ey, ew, eh) in eyes:
+            cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"eye_{timestamp}.jpg"
