@@ -14,14 +14,13 @@ from sklearn.preprocessing import StandardScaler
 
 # Try importing Core ML, if unavailable, use regular model saving
 try:
-    import coremltools as ct
-    coreml_available = True
+        coreml_available = True
 except ModuleNotFoundError:
     print("⚠️ Warning: Core ML Tools is not installed. Install it using `pip install coremltools`.")
     coreml_available = False
 
 labels_file = "eye_glucose_data/labels.csv"
-model_file = "eye_glucose_model.mlmodel" if coreml_available else "eye_glucose_model.pkl"
+model_file = "eye_glucose_model.pkl"
 
 def remove_outliers(df):
     """Removes outliers using the Interquartile Range (IQR)."""
@@ -105,13 +104,8 @@ def train_model():
     
     print(f"Best Model: {best_model.__class__.__name__} with R² Score: {best_score:.5f}")
     
-    if coreml_available:
-        coreml_model = ct.converters.sklearn.convert(best_model)
-        coreml_model.save(model_file)
-        print(f"Best model saved as Core ML model to {model_file}")
-    else:
-        joblib.dump(best_model, "eye_glucose_model.pkl")
-        print(f"Best model saved as a standard pickle file.")
+    joblib.dump(best_model, "eye_glucose_model.pkl")
+print(f"Best model saved as a standard pickle file.")
 
 if __name__ == "__main__":
     train_model()

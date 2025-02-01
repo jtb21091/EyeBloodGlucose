@@ -2,18 +2,18 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
-import coremltools as ct  # Core ML for optimized inference
+import warnings
 from datetime import datetime
+import joblib
 
-model_file = "eye_glucose_model.mlmodel"
+model_file = "eye_glucose_model.pkl"
 
-# Load Core ML Model
+# Load Standard Model
 if os.path.exists(model_file):
-    model = ct.models.MLModel(model_file)
-    trained_features = [f.name for f in model.get_spec().description.input]
-    print(f"✅ Core ML Model loaded with {len(trained_features)} features: {trained_features}")
+    model = joblib.load(model_file)
+    trained_features = model.feature_names_in_ if hasattr(model, 'feature_names_in_') else []
 else:
-    print("❌ Core ML Model not found. Exiting.")
+    print("❌ Standard Model not found. Exiting.")
     exit()
 
 def extract_features(image):
@@ -42,61 +42,49 @@ def extract_features(image):
     
     return features
 
-print(model.get_spec().description)
-print(f"🔎 Input to Core ML: {input_data.shape}, Expected: (1, 16)")
-print(f"Features provided: {features.keys()}")
-print(f"Trained Features: {trained_features}")
-
-import numpy as np
-
 def predict_blood_glucose(features):
-    """Uses Core ML model to predict blood glucose."""
+    """Uses the trained model to predict blood glucose."""
     try:
-        # Ensure the features dictionary contains all 16 required keys
-        input_data = np.array([features[name] for name in trained_features if name in features], dtype=np.float32)
+        # Convert to DataFrame to retain feature names
+        input_data = pd.DataFrame([features], columns=trained_features)
 
-        # Core ML requires correctly formatted input
-        input_dict = {"input": input_data.reshape(1, -1)}  # Match Core ML's expected input shape
-        
-        # Make prediction
-        prediction = model.predict(input_dict)
+        # Suppress Scikit-Learn warnings about feature names
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            prediction = model.predict(input_data)
 
-        # Extract prediction result (ensure correct key matches "prediction")
-        glucose_value = prediction.get("prediction", None)  # Adjust based on actual model output key
-        
-        return round(glucose_value[0], 2) if glucose_value is not None else "Error"
-
-    except Exception as e:
-        print(f"❌ Prediction error: {str(e)}")
+        return round(prediction[0], 2) if prediction is not None else "Error"
+    except Exception:
         return "Error"
-
 
 def live_eye_analysis():
     """Real-time eye glucose monitoring."""
-    print("Starting real-time eye analysis with Core ML...")
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Error: Could not open webcam.")
         return
     
     last_prediction_time = datetime.now()
-    glucose_prediction = "N/A"
-    
+    last_displayed_glucose = None
+    glucose_prediction = "N/A"  # Ensure variable is initialized
+
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Error: Could not capture frame.")
             break
         
         # Predict every 0.5 seconds
         current_time = datetime.now()
         if (current_time - last_prediction_time).total_seconds() > 0.5:
             features = extract_features(frame)
-            glucose_prediction = predict_blood_glucose(features)
+            new_glucose_prediction = predict_blood_glucose(features)
             last_prediction_time = current_time
-        
-        # Display prediction
-        display_text = f"Glucose: {glucose_prediction} mg/dL"
+
+            # Only update if the value changes
+            if new_glucose_prediction != last_displayed_glucose:
+                last_displayed_glucose = new_glucose_prediction
+
+        # Display prediction on screen
+        display_text = f"Glucose: {last_displayed_glucose} mg/dL"
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
                     0.7, (0, 255, 0), 2)
         cv2.imshow("Optimized Eye Glucose Monitor", frame)
