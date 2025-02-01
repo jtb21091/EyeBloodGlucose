@@ -2,15 +2,10 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
-import joblib
 from datetime import datetime
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
 
 labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
-model_file = "eye_glucose_model.pkl"
 os.makedirs(image_dir, exist_ok=True)
 
 def capture_eye_image():
@@ -80,13 +75,22 @@ def update_data():
     vein_prominence = get_vein_prominence(frame)
     pupil_response_time = get_pupil_response_time()
     
-    if os.path.exists(labels_file):
-        df = pd.read_csv(labels_file)
-    else:
-        df = pd.DataFrame(columns=["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"])
+    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"]
     
+    # Check if file exists and has content
+    if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
+        df = pd.DataFrame(columns=columns)
+    else:
+        df = pd.read_csv(labels_file)
+    
+    # Ensure all expected columns exist
+    for col in columns:
+        if col not in df.columns:
+            df[col] = np.nan  # Fill missing columns with NaN
+    
+    # Append new data
     new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time]],
-                              columns=["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time"])
+                              columns=columns)
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
     print(f"New data added to CSV: {filename}")
