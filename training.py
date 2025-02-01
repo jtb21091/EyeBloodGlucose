@@ -4,9 +4,10 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.neural_network import MLPRegressor
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, r2_score
 
 labels_file = "eye_glucose_data/labels.csv"
@@ -78,8 +79,12 @@ def train_model():
     # Train Multiple Models
     models = {
         "Linear Regression": LinearRegression(),
+        "Ridge Regression": Ridge(alpha=1.0),
+        "Lasso Regression": Lasso(alpha=0.1),
         "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True),
-        "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42)
+        "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+        "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
+        "Support Vector Regression": SVR(kernel='rbf', C=100, gamma=0.1)
     }
     
     best_model = None
