@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 import joblib
+import time
 
 # Load trained model if available
 model_file = "eye_glucose_model.pkl"
@@ -72,26 +73,31 @@ def live_eye_analysis():
         print("Error: Could not open webcam.")
         return
     
+    last_prediction_time = time.time()
+    glucose_prediction = "N/A"
+    
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Error: Could not capture frame.")
             break
         
-        feature_values = {
-            "pupil_size": detect_pupil(frame),
-            "pupil_circularity": get_pupil_circularity(frame),
-            "sclera_redness": get_sclera_redness(frame),
-            "vein_prominence": get_vein_prominence(frame),
-            "pupil_response_time": 0.2,  # Placeholder
-            "ir_intensity": get_ir_intensity(frame),
-            "scleral_vein_density": get_scleral_vein_density(frame),
-            "blink_rate": detect_blink()
-        }
+        current_time = time.time()
+        if current_time - last_prediction_time > 1:  # Update glucose prediction every second
+            feature_values = {
+                "pupil_size": detect_pupil(frame),
+                "pupil_circularity": get_pupil_circularity(frame),
+                "sclera_redness": get_sclera_redness(frame),
+                "vein_prominence": get_vein_prominence(frame),
+                "pupil_response_time": 0.2,  # Placeholder
+                "ir_intensity": get_ir_intensity(frame),
+                "scleral_vein_density": get_scleral_vein_density(frame),
+                "blink_rate": detect_blink()
+            }
+            glucose_prediction = predict_blood_glucose(**feature_values)
+            last_prediction_time = current_time
         
-        predicted_glucose = predict_blood_glucose(**feature_values)
-        
-        display_text = f"Glucose: {predicted_glucose}"
+        display_text = f"Glucose: {glucose_prediction}"
         cv2.putText(frame, display_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         cv2.imshow("Eye Glucose Monitor", frame)
