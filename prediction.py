@@ -45,14 +45,15 @@ def extract_features(image):
 def predict_blood_glucose(features):
     """Uses Core ML model to predict blood glucose."""
     try:
-        # Core ML expects a dictionary where keys match the model's input names
-        input_data = {name: features[name] for name in trained_features if name in features}
+        # Convert dictionary values into a list (ensure feature order is correct)
+        input_data = np.array([features[name] for name in trained_features if name in features], dtype=np.float32)
 
-        # If Core ML expects a single array/tensor, restructure input
-        if len(input_data) > 1:
-            input_data = {"input": list(input_data.values())}  # Convert to tensor format
+        # Reshape to match model input (if it's expecting a single tensor)
+        input_dict = {"input": input_data.reshape(1, -1)}
 
-        prediction = model.predict(input_data)["blood_glucose"]
+        # Predict with Core ML
+        prediction = model.predict(input_dict)["blood_glucose"]
+        
         return round(prediction, 2)
 
     except Exception as e:
