@@ -38,29 +38,44 @@ def get_birefringence_index(image):
     gradient = cv2.Sobel(gray, cv2.CV_64F, 1, 1, ksize=5)
     return round((np.mean(edges) + np.std(gradient)) / 2, 5)
 
+def get_ir_temperature(image):
+    """
+    Simulate the IR temperature calculation.
+    This dummy calculation converts the grayscale average intensity to a temperature range.
+    For a real application, replace this with a proper IR sensor measurement and calibration.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    avg_intensity = np.mean(gray)
+    # Map average intensity (0-255) to a temperature range (e.g., 20°C to 60°C)
+    temperature = (avg_intensity / 255.0) * 40 + 20
+    return round(temperature, 2)
+
 def update_data():
     filename, frame = capture_eye_image()
     if filename is None or frame is None:
         return
 
     birefringence_index = get_birefringence_index(frame)
+    ir_temperature = get_ir_temperature(frame)  # Calculate IR temperature from the image
 
-    # If the CSV file does not exist or is empty, create a new DataFrame with the extended columns.
+    # Define the columns for our CSV
+    columns = [
+        'filename', 'blood_glucose', 'pupil_size', 'sclera_redness', 
+        'vein_prominence', 'pupil_response_time', 'ir_intensity', 
+        'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity', 
+        'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity', 
+        'birefringence_index'
+    ]
+
+    # If the CSV file does not exist or is empty, create a new DataFrame with the columns.
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
-        columns = [
-            'filename', 'blood_glucose', 'pupil_size', 'sclera_redness', 
-            'vein_prominence', 'pupil_response_time', 'ir_intensity', 
-            'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity', 
-            'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity', 
-            'birefringence_index'
-        ]
         df = pd.DataFrame(columns=columns)
     else:
         df = pd.read_csv(labels_file)
-        columns = df.columns.tolist()  # use existing columns
+        # Use the columns already present in the file
+        columns = df.columns.tolist()
 
-    # Create a new row of data.
-    # Make sure that the number of values matches the number of columns.
+    # Create a new row of data. Ensure the number of values matches the number of columns.
     new_entry = pd.DataFrame([[
         filename,                          # filename
         "",                                # blood_glucose (placeholder)
@@ -70,7 +85,7 @@ def update_data():
         np.random.uniform(0.1, 0.5),          # pupil_response_time
         np.random.uniform(10, 255),         # ir_intensity
         np.random.uniform(0, 1),            # scleral_vein_density
-        np.nan,                           # ir_temperature (placeholder)
+        ir_temperature,                     # ir_temperature calculated from image
         np.random.uniform(10, 40),          # tear_film_reflectivity
         np.random.uniform(0, 255),          # pupil_dilation_rate
         np.random.uniform(0.1, 1.0),          # sclera_color_balance
