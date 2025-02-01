@@ -17,7 +17,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-
 @dataclass
 class EyeDetection:
     """Data class for eye detection results."""
@@ -27,7 +26,6 @@ class EyeDetection:
     timestamp: datetime
     is_valid: bool         # Indicates if the detection meets our criteria.
     eyes_open: bool        # Indicates if the eyes are open.
-
 
 class EyeGlucoseMonitor:
     def __init__(self, model_path: str = "eye_glucose_model.pkl"):
@@ -48,18 +46,19 @@ class EyeGlucoseMonitor:
         )
 
         # Buffers for smoothing and analysis.
-        self.glucose_buffer = deque(maxlen=60)
+        self.glucose_buffer = deque(maxlen=60)  # Buffer to compute running average
         self.detection_buffer = deque(maxlen=30)
         self.fps_buffer = deque(maxlen=30)
 
         # Timing and state variables.
         self.last_frame_time = time.time()
+        self.last_prediction_time = time.time()  # For triggering prediction every second
         self.consecutive_invalid_frames = 0
         self.MIN_IR_INTENSITY = 30  # Minimum IR intensity threshold for dark conditions.
 
         # Threading for asynchronous predictions.
         self.prediction_thread = None
-        self.latest_prediction = None
+        self.latest_prediction = None  # Running average of predictions
         self.prediction_lock = threading.Lock()
 
         # Detection parameters.
@@ -93,8 +92,18 @@ class EyeGlucoseMonitor:
         Returns:
             A list of feature names.
         """
-        # Dummy implementation: update with actual feature names if available.
-        return ["ir_intensity", "timestamp", "pupil_size", "pupil_circularity", "vein_prominence"]
+        # Update these feature names to match exactly what was used during model training.
+        return [
+            "blink_rate",
+            "channels",
+            "height",
+            "ir_temperature",
+            "pupil_dilation_rate",
+            "ir_intensity",
+            "pupil_size",
+            "pupil_circularity",
+            "vein_prominence"
+        ]
 
     def _initialize_cascades(self) -> Dict[str, cv2.CascadeClassifier]:
         """
@@ -230,13 +239,17 @@ class EyeGlucoseMonitor:
         if not eye_data.is_valid or not eye_data.eyes_open:
             return None
 
-        # Base features.
+        # Build a feature dictionary that matches the model's training features.
         features = {
-            "ir_intensity": eye_data.ir_intensity,
-            "timestamp": datetime.now().timestamp()
+            "blink_rate": np.random.uniform(0, 5),          # Replace with actual blink rate calculation if available.
+            "channels": frame.shape[2] if len(frame.shape) > 2 else 1,
+            "height": frame.shape[0],
+            "ir_temperature": np.random.uniform(30, 40),      # Replace with actual IR temperature measurement if available.
+            "pupil_dilation_rate": np.random.uniform(0, 1),    # Replace with actual pupil dilation rate if available.
+            "ir_intensity": eye_data.ir_intensity,            # Already computed.
         }
 
-        # Adjust feature extraction based on lighting conditions.
+        # Depending on lighting conditions, calculate additional features.
         if eye_data.ir_intensity < self.MIN_IR_INTENSITY:
             features.update({
                 "pupil_size": self._calculate_ir_pupil_size(frame),
@@ -252,7 +265,7 @@ class EyeGlucoseMonitor:
 
         return features
 
-    # Dummy implementations of feature extraction methods. Replace these with real image processing.
+    # Dummy implementations of feature extraction methods.
     def _calculate_ir_pupil_size(self, frame: np.ndarray) -> float:
         """Calculate pupil size using IR-optimized detection (dummy implementation)."""
         return np.random.uniform(20, 100)
@@ -293,6 +306,7 @@ class EyeGlucoseMonitor:
     def predict_glucose_async(self, features: Dict):
         """
         Asynchronously predict the glucose level using the extracted features.
+        The prediction is added to a buffer to compute a running average.
         
         Args:
             features: A dictionary of features extracted from the frame.
@@ -306,8 +320,13 @@ class EyeGlucoseMonitor:
             else:
                 # Dummy prediction if no model is loaded.
                 result = np.random.uniform(70, 150)
+
             with self.prediction_lock:
-                self.latest_prediction = result
+                if result is not None:
+                    self.glucose_buffer.append(result)
+                    # Compute the running average from the buffer.
+                    running_avg = np.mean(self.glucose_buffer)
+                    self.latest_prediction = running_avg
         except Exception as e:
             logging.error(f"Error during glucose prediction: {e}")
 
@@ -354,6 +373,7 @@ class EyeGlucoseMonitor:
         """
         Run the eye glucose monitoring system.
         Captures video frames, performs detection and feature extraction, and displays an overlay.
+        Predictions are triggered once per second.
         """
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
@@ -369,11 +389,14 @@ class EyeGlucoseMonitor:
 
                 # Perform face and eye detection.
                 eye_data = self.detect_face_and_eyes(frame)
+
+                # Trigger prediction only once per second if detection is valid.
+                current_time = time.time()
                 if eye_data.is_valid and eye_data.eyes_open:
-                    features = self.extract_features(frame, eye_data)
-                    if features:
-                        # Run glucose prediction asynchronously.
-                        if (self.prediction_thread is None or not self.prediction_thread.is_alive()):
+                    if current_time - self.last_prediction_time >= 1.0:
+                        self.last_prediction_time = current_time
+                        features = self.extract_features(frame, eye_data)
+                        if features:
                             self.prediction_thread = threading.Thread(
                                 target=self.predict_glucose_async,
                                 args=(features,)
@@ -397,7 +420,6 @@ class EyeGlucoseMonitor:
         finally:
             cap.release()
             cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     try:
