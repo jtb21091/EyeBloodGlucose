@@ -45,9 +45,16 @@ def extract_features(image):
 def predict_blood_glucose(features):
     """Uses Core ML model to predict blood glucose."""
     try:
-        input_data = {name: features[name] for name in trained_features}
+        # Core ML expects a dictionary where keys match the model's input names
+        input_data = {name: features[name] for name in trained_features if name in features}
+
+        # If Core ML expects a single array/tensor, restructure input
+        if len(input_data) > 1:
+            input_data = {"input": list(input_data.values())}  # Convert to tensor format
+
         prediction = model.predict(input_data)["blood_glucose"]
         return round(prediction, 2)
+
     except Exception as e:
         print(f"Prediction error: {str(e)}")
         return "Error"
