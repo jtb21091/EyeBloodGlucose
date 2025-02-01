@@ -35,13 +35,22 @@ def capture_eye_image():
         print("No eyes detected. Data not added.")
         return None, None
 
-    # Compute a bounding box that encloses all detected eyes.
-    x_min = min([x for (x, y, w, h) in eyes])
-    y_min = min([y for (x, y, w, h) in eyes])
-    x_max = max([x + w for (x, y, w, h) in eyes])
-    y_max = max([y + h for (x, y, w, h) in eyes])
+    # Check if eyes are open by measuring the height-to-width ratio.
+    # This threshold is heuristic and may need adjustment.
+    open_threshold = 0.3  
+    open_eyes = [(x, y, w, h) for (x, y, w, h) in eyes if (h / w) > open_threshold]
+    
+    if len(open_eyes) == 0:
+        print("Eyes appear to be closed. Data not added.")
+        return None, None
 
-    # Crop the image to the region containing the eyes.
+    # Compute a bounding box that encloses all open eyes.
+    x_min = min([x for (x, y, w, h) in open_eyes])
+    y_min = min([y for (x, y, w, h) in open_eyes])
+    x_max = max([x + w for (x, y, w, h) in open_eyes])
+    y_max = max([y + h for (x, y, w, h) in open_eyes])
+
+    # Crop the image to the region containing the open eyes.
     roi = frame[y_min:y_max, x_min:x_max]
 
     # Save the cropped eye region
@@ -75,7 +84,7 @@ def get_ir_temperature(image):
 def update_data():
     filename, roi = capture_eye_image()
     if filename is None or roi is None:
-        # If no eyes are detected, exit without adding data.
+        # If no valid open eyes are detected, exit without adding data.
         return
 
     birefringence_index = get_birefringence_index(roi)
