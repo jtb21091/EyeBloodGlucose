@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
 labels_file = "eye_glucose_data/labels.csv"
@@ -22,7 +23,7 @@ def remove_outliers(df):
     print(f"Outliers removed. Dataset reduced from {len(df)} to {len(df_filtered)} rows.")
     return df_filtered
 
-def train_model(use_neural_network=False):
+def train_model():
     if not os.path.exists(labels_file):
         print("Error: Data file not found.")
         return
@@ -46,7 +47,6 @@ def train_model(use_neural_network=False):
     
     # Remove outliers
     df = remove_outliers(df)
-
     print(f"Dataset size after cleaning: {len(df)} rows")
     
     if len(df) < 5:
@@ -61,7 +61,7 @@ def train_model(use_neural_network=False):
     constant_features = [col for col in X.columns if X[col].nunique() == 1]
     if constant_features:
         print(f"Removing constant features: {constant_features}")
-        X = X.drop(columns=constant_features).copy()  # Use .copy() to avoid SettingWithCopyWarning
+        X = X.drop(columns=constant_features).copy()
     
     # Check for NaN values before training
     if X.isnull().sum().sum() > 0:
@@ -75,31 +75,32 @@ def train_model(use_neural_network=False):
     else:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
     
-    if use_neural_network:
-        model = MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True)
-        model.fit(X_train, y_train)
-        
-        # Collect loss history
-        training_loss = model.loss_curve_
-        plt.plot(training_loss)
-        plt.xlabel("Iterations")
-        plt.ylabel("Training Loss")
-        plt.title("Neural Network Training Loss Curve")
-        plt.show()
-        
-    else:
-        model = LinearRegression()
-        model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    mse = mean_squared_error(y_test, predictions)
-    r2 = r2_score(y_test, predictions)  # Calculate R² score
-
-    print(f"Model trained. MSE: {mse:.10f}")
-    print(f"Model trained. R² Score: {r2:.5f}")  # Display R² Score
+    # Train Multiple Models
+    models = {
+        "Linear Regression": LinearRegression(),
+        "Neural Network": MLPRegressor(hidden_layer_sizes=(64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, verbose=True),
+        "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42)
+    }
     
-    joblib.dump(model, model_file)
-    print(f"Model saved to {model_file}")
+    best_model = None
+    best_score = float('-inf')
+    
+    for name, model in models.items():
+        print(f"Training {name}...")
+        model.fit(X_train, y_train)
+        predictions = model.predict(X_test)
+        mse = mean_squared_error(y_test, predictions)
+        r2 = r2_score(y_test, predictions)
+        print(f"{name} - MSE: {mse:.10f}, R² Score: {r2:.5f}")
+        
+        if r2 > best_score:
+            best_model = model
+            best_score = r2
+    
+    print(f"Best Model: {best_model.__class__.__name__} with R² Score: {best_score:.5f}")
+    
+    joblib.dump(best_model, model_file)
+    print(f"Best model saved to {model_file}")
 
 if __name__ == "__main__":
-    train_model(use_neural_network=True)  # Set to True to use MLP Neural Network
+    train_model()
