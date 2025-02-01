@@ -38,7 +38,7 @@ def compute_mard(y_true, y_pred):
     Returns:
         MARD value in percent.
     """
-    epsilon = 1e-8  # small number to avoid division by zero
+    epsilon = 1e-8  # small number to avoid division-by-zero
     return np.mean(np.abs((y_true - y_pred) / (y_true + epsilon))) * 100
 
 
@@ -48,7 +48,7 @@ def compute_sigma_level(y_true, y_pred, TEa=15):
     
         Sigma = (TEa - |bias|) / SD(error)
     
-    where TEa is the Total Allowable Error (set to 15 by default).
+    where TEa is the Total Allowable Error.
     
     Args:
         y_true: Ground truth target values (array-like)
@@ -85,7 +85,7 @@ class EyeGlucoseModel:
         """
         df_clean = df.copy()
         numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols.remove("blood_glucose")  # Exclude target
+        numeric_cols.remove("blood_glucose")  # Exclude target from outlier detection
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
         outliers_z = (z_scores > 6).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
@@ -238,11 +238,35 @@ class EyeGlucoseModel:
         plt.grid(True)
         plt.show()
 
+    def save_metrics_to_file(self, best_model_name, metrics, cgm_benchmarks, filename="best_model_metrics.csv"):
+        """
+        Save the best model's metrics and CGM benchmark comparisons to a CSV file.
+        
+        Args:
+            best_model_name: Name of the best model.
+            metrics: A dictionary containing the best model's metrics.
+            cgm_benchmarks: A dictionary containing CGM benchmark values.
+            filename: The output filename (CSV).
+        """
+        rows = [
+            {"Metric": "R²", "Best Model Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks["R²"]},
+            {"Metric": "MSE", "Best Model Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks["MSE"]},
+            {"Metric": "MAE", "Best Model Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks["MAE"]},
+            {"Metric": "MARD", "Best Model Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks["MARD"]},
+            {"Metric": "Sigma Level", "Best Model Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks["Sigma Level"]}
+        ]
+        df_metrics = pd.DataFrame(rows)
+        # Optionally, include the model name at the top of the file.
+        with open(filename, 'w') as f:
+            f.write(f"Best Model: {best_model_name}\n")
+        df_metrics.to_csv(filename, mode='a', index=False)
+        logging.info(f"Best model metrics saved to: {filename}")
+
     def train_model(self):
         """
         Train and evaluate each model via hyperparameter tuning.
         In addition to R²/MSE/MAE, this version computes MARD and Sigma Level.
-        For the Neural Network model, we also demonstrate an epoch–by–epoch loop.
+        For the Neural Network model, we also demonstrate an epoch-by-epoch loop.
         """
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -261,9 +285,15 @@ class EyeGlucoseModel:
                 ('scaler', StandardScaler())
             ])
 
+        # These variables will track the best model and its metrics.
         best_score = float('-inf')
         best_model_name = None
         best_estimator = None
+        best_r2 = None
+        best_mse = None
+        best_mae = None
+        best_mard = None
+        best_sigma = None
 
         models = self.get_model_configurations()
         n_iter_search = 50
@@ -314,7 +344,6 @@ class EyeGlucoseModel:
                 logging.info("Starting custom epoch loop for Neural Network to track MARD & Sigma Level...")
                 # Extract best hyperparameters and reinitialize the regressor
                 nn_params = {key.split("regressor__")[1]: value for key, value in search.best_params_.items()}
-                # Set max_iter=1 and warm_start=True so that each call to .fit() does one epoch more.
                 nn_model = MLPRegressor(max_iter=1, warm_start=True, early_stopping=False, random_state=42, **nn_params)
                 nn_pipeline = Pipeline([
                     ('preprocessor', preprocessor),
@@ -332,7 +361,6 @@ class EyeGlucoseModel:
                     sigma_epochs.append(sigma_epoch)
                     logging.info(f"Epoch {epoch+1}/{n_epochs} - MARD: {mard_epoch:.5f}% - Sigma Level: {sigma_epoch:.5f}")
                 
-                # Plot the evolution of these metrics over epochs.
                 plt.figure(figsize=(10, 6))
                 plt.plot(range(1, n_epochs+1), mard_epochs, marker='o', label="MARD")
                 plt.xlabel("Epoch")
@@ -351,14 +379,40 @@ class EyeGlucoseModel:
                 plt.grid(True)
                 plt.show()
             
+            # Update the best model if this one has a higher R² score.
             if r2 > best_score:
                 best_score = r2
                 best_estimator = search.best_estimator_
                 best_model_name = name
+                best_r2 = r2
+                best_mse = mse
+                best_mae = mae
+                best_mard = mard_value
+                best_sigma = sigma_value
 
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.best_model = best_estimator
         self.save_model()
+
+        # Define some example CGM benchmark values (adjust as needed)
+        cgm_benchmarks = {
+            "R²": 0.95,         # For example, a CGM might be expected to achieve very high correlation.
+            "MSE": 5.0,         # Example value: lower MSE is better.
+            "MAE": 2.0,         # Example value.
+            "MARD": 10.0,       # CGM devices sometimes target a MARD below 10%.
+            "Sigma Level": 3.0  # A sigma level of 3 or more may be desired.
+        }
+
+        # Collect best model metrics into a dictionary
+        best_metrics = {
+            "R2": best_r2,
+            "MSE": best_mse,
+            "MAE": best_mae,
+            "MARD": best_mard,
+            "Sigma": best_sigma
+        }
+        # Save the best model's metrics to a CSV file.
+        self.save_metrics_to_file(best_model_name, best_metrics, cgm_benchmarks, filename="best_model_metrics.csv")
 
     def save_model(self):
         """
