@@ -17,7 +17,6 @@ FEATURES_ORDER = [
     'vein_prominence',
     'pupil_response_time',
     'ir_intensity',
-    'pupil_circularity',
     'scleral_vein_density',
     'ir_temperature',
     'tear_film_reflectivity',
@@ -78,10 +77,7 @@ def get_scleral_vein_density(image):
     edges = cv2.Canny(gray, 50, 150)
     return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
 
-def get_pupil_circularity(image):
-    # Dummy implementation for pupil circularity.
-    # Replace with your actual calculation if available.
-    return np.random.uniform(0.0, 1.0)
+# (The get_pupil_circularity function has been removed)
 
 # ---------------------------
 # Main Prediction Code
@@ -172,7 +168,7 @@ class EyeGlucoseMonitor:
             "vein_prominence": get_vein_prominence(frame),
             "pupil_response_time": get_pupil_response_time(),
             "ir_intensity": get_ir_intensity(frame),
-            "pupil_circularity": get_pupil_circularity(frame),
+            # Removed "pupil_circularity": get_pupil_circularity(frame),
             "scleral_vein_density": get_scleral_vein_density(frame),
             "ir_temperature": get_ir_temperature(frame),
             "tear_film_reflectivity": get_tear_film_reflectivity(frame),

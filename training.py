@@ -89,11 +89,23 @@ class EyeGlucoseModel:
         # Split features and target
         y = df["blood_glucose"].astype(float)
         
-        # Define the reduced features explicitly
-        reduced_features = ['pupil_size', 'sclera_redness', 'vein_prominence', 'pupil_response_time', 'ir_intensity', 'pupil_circularity', 'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity', 'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index']
+        # Define the reduced features explicitly (pupil_circularity removed)
+        reduced_features = [
+            'pupil_size', 
+            'sclera_redness', 
+            'vein_prominence', 
+            'pupil_response_time', 
+            'ir_intensity',
+            'scleral_vein_density', 
+            'ir_temperature', 
+            'tear_film_reflectivity', 
+            'pupil_dilation_rate', 
+            'sclera_color_balance', 
+            'vein_pulsation_intensity', 
+            'birefringence_index'
+        ]
         X = df[reduced_features]
     
-        
         # Remove non-numeric columns with a warning
         non_numeric_cols = X.select_dtypes(exclude=['number']).columns
         if len(non_numeric_cols) > 0:
@@ -101,8 +113,6 @@ class EyeGlucoseModel:
             X = X.drop(columns=non_numeric_cols)
             
         return X, y
-
-# Additional methods remain unchanged
 
     def get_model_configurations(self):
         """
