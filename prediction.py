@@ -47,6 +47,7 @@ def get_vein_prominence(image):
     return np.random.uniform(0, 10)
 
 def get_ir_temperature(image):
+    # For demonstration, we compute IR temperature from the mean of the red channel.
     return round(np.mean(image[:, :, 2]), 5)
 
 def get_tear_film_reflectivity(image):
@@ -77,10 +78,8 @@ def get_scleral_vein_density(image):
     edges = cv2.Canny(gray, 50, 150)
     return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
 
-# (The get_pupil_circularity function has been removed)
-
 # ---------------------------
-# Main Prediction Code
+# DataClass for Detection
 # ---------------------------
 @dataclass
 class EyeDetection:
@@ -90,7 +89,11 @@ class EyeDetection:
     timestamp: datetime
     is_valid: bool         # Whether a valid face was detected.
     eyes_open: bool        # Whether the eyes are considered "open" (or forced open in dark).
+    face_rect: tuple = None  # The bounding box of the detected face (x, y, w, h)
 
+# ---------------------------
+# Main Prediction Code
+# ---------------------------
 class EyeGlucoseMonitor:
     def __init__(self, model_path: str = "eye_glucose_model.pkl"):
         self.model_path = model_path
@@ -132,6 +135,7 @@ class EyeGlucoseMonitor:
         faces = self.face_cascade.detectMultiScale(
             enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60)
         )
+        # Try with a blurred image if no faces found under dark conditions.
         if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
             faces = self.face_cascade.detectMultiScale(
@@ -139,8 +143,10 @@ class EyeGlucoseMonitor:
             )
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
         if len(faces) > 0:
+            # Choose the largest face
             face = max(faces, key=lambda r: r[2] * r[3])
             x, y, w, h = face
+            detection.face_rect = face  # Save the face bounding box
             face_roi = enhanced[y:y+h, x:x+w]
             left_eyes = self.eye_cascades["left"].detectMultiScale(
                 face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
@@ -148,8 +154,9 @@ class EyeGlucoseMonitor:
             right_eyes = self.eye_cascades["right"].detectMultiScale(
                 face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
             )
+            # Decide if eyes are detected.
             if ir_intensity < self.MIN_IR_INTENSITY:
-                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True)
+                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
             else:
                 if len(left_eyes) > 0 or len(right_eyes) > 0:
                     ear_list = []
@@ -158,24 +165,61 @@ class EyeGlucoseMonitor:
                         ear_list.append(ratio)
                     avg_ear = np.mean(ear_list) if ear_list else 0
                     eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
-                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open)
+                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
         return detection
 
     def extract_features(self, frame: np.ndarray) -> Dict:
+        """
+        Extract features only from the eye region.
+        If no eyes are detected, returns an empty dictionary.
+        """
+        detection = self.detect_face_and_eyes(frame)
+        # Check for valid detection with at least one eye detected.
+        if not detection.is_valid or (len(detection.left_eye) == 0 and len(detection.right_eye) == 0):
+            return {}
+        if detection.face_rect is None:
+            return {}
+
+        # Get the face region (in original frame coordinates)
+        fx, fy, fw, fh = detection.face_rect
+        face_roi = frame[fy:fy+fh, fx:fx+fw]
+
+        # Convert the detected eye boxes (which are relative to the face ROI) into a union ROI.
+        eye_boxes = []
+        for (ex, ey, ew, eh) in detection.left_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        for (ex, ey, ew, eh) in detection.right_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        if not eye_boxes:
+            return {}
+        ex_min = min(box[0] for box in eye_boxes)
+        ey_min = min(box[1] for box in eye_boxes)
+        ex_max = max(box[2] for box in eye_boxes)
+        ey_max = max(box[3] for box in eye_boxes)
+        # These coordinates are relative to the face ROI.
+        # Convert them to original frame coordinates.
+        eye_roi_x = fx + ex_min
+        eye_roi_y = fy + ey_min
+        eye_roi_w = ex_max - ex_min
+        eye_roi_h = ey_max - ey_min
+
+        # Ensure the ROI is within frame bounds.
+        eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
+
+        # Extract features from the cropped eye region.
         features = {
-            "pupil_size": get_pupil_size(frame),
-            "sclera_redness": get_sclera_redness(frame),
-            "vein_prominence": get_vein_prominence(frame),
+            "pupil_size": get_pupil_size(eye_roi),
+            "sclera_redness": get_sclera_redness(eye_roi),
+            "vein_prominence": get_vein_prominence(eye_roi),
             "pupil_response_time": get_pupil_response_time(),
-            "ir_intensity": get_ir_intensity(frame),
-            # Removed "pupil_circularity": get_pupil_circularity(frame),
-            "scleral_vein_density": get_scleral_vein_density(frame),
-            "ir_temperature": get_ir_temperature(frame),
-            "tear_film_reflectivity": get_tear_film_reflectivity(frame),
+            "ir_intensity": get_ir_intensity(eye_roi),
+            "scleral_vein_density": get_scleral_vein_density(eye_roi),
+            "ir_temperature": get_ir_temperature(eye_roi),
+            "tear_film_reflectivity": get_tear_film_reflectivity(eye_roi),
             "pupil_dilation_rate": get_pupil_dilation_rate(),
-            "sclera_color_balance": get_sclera_color_balance(frame),
-            "vein_pulsation_intensity": get_vein_pulsation_intensity(frame),
-            "birefringence_index": get_birefringence_index(frame)
+            "sclera_color_balance": get_sclera_color_balance(eye_roi),
+            "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
+            "birefringence_index": get_birefringence_index(eye_roi)
         }
         ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
         return ordered_features
@@ -183,7 +227,7 @@ class EyeGlucoseMonitor:
     def predict_glucose(self, features: Dict):
         result = None
         try:
-            if self.model is not None:
+            if self.model is not None and features:
                 df = pd.DataFrame([features])
                 prediction = self.model.predict(df)
                 if len(prediction) > 0:
@@ -201,6 +245,7 @@ class EyeGlucoseMonitor:
     def run(self):
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
+            print("Could not open webcam.")
             return
 
         while True:
@@ -210,7 +255,8 @@ class EyeGlucoseMonitor:
 
             current_time = time.time()
             detection = self.detect_face_and_eyes(frame)
-            if detection.is_valid:
+            # Only proceed if a valid face with detected eyes is found.
+            if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
                 self.last_valid_detection_time = current_time
                 if current_time - self.last_prediction_time >= 1.0:
                     self.last_prediction_time = current_time
