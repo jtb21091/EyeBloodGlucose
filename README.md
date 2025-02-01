@@ -11,8 +11,22 @@ Best Model: Random Forest with R² Score: 0.55870
 # 3) train the model
 # 4) run the prediction
 
+# Best Model Metrics
+
+Below are the metrics for the best model compared to CGM benchmarks:
+
+| Metric       | Best Model Value | CGM Benchmark |
+|--------------|------------------|---------------|
+| R²           | 0.49             | 0.94          |
+| MSE          | 474              | 6.2           |
+| MAE          | 16               | 2.1           |
+| MARD         | 15%              | 10.5%         |
+| Sigma Level  | 0.59             | 3.0           |
+
+
 ##
 
 ![Image](pngfiles/1.png)
 
 ![Image](pngfiles/2.png)
+
