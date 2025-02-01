@@ -12,9 +12,6 @@ from dataclasses import dataclass
 
 # Define the expected feature order (must match training, ignoring the first two columns)
 FEATURES_ORDER = [
-    "height",
-    "width",
-    "channels",
     "pupil_size",
     "sclera_redness",
     "vein_prominence",
@@ -22,7 +19,6 @@ FEATURES_ORDER = [
     "ir_intensity",
     "pupil_circularity",
     "scleral_vein_density",
-    "blink_rate",
     "ir_temperature",
     "tear_film_reflectivity",
     "pupil_dilation_rate",
@@ -145,9 +141,6 @@ class EyeGlucoseMonitor:
     def extract_features(self, frame: np.ndarray) -> Dict:
         height, width, channels = frame.shape
         features = {
-            "height": height,
-            "width": width,
-            "channels": channels,
             "pupil_size": get_pupil_size(frame),
             "sclera_redness": get_sclera_redness(frame),
             "vein_prominence": get_vein_prominence(frame),
@@ -155,7 +148,6 @@ class EyeGlucoseMonitor:
             "ir_intensity": get_ir_intensity(frame),
             "pupil_circularity": 0.5,  # Default numeric value; adjust as needed
             "scleral_vein_density": get_scleral_vein_density(frame),
-            "blink_rate": 0.5,         # Default numeric value; adjust as needed
             "ir_temperature": get_ir_temperature(frame),
             "tear_film_reflectivity": get_tear_film_reflectivity(frame),
             "pupil_dilation_rate": get_pupil_dilation_rate(),
