@@ -66,6 +66,11 @@ def get_ir_intensity(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return round(np.mean(gray), 5)
 
+def get_scleral_vein_density(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)  # Edge detection for veins
+    return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
+
 def update_data():
     filename, frame = capture_eye_image()
     if filename is None or frame is None:
@@ -82,20 +87,31 @@ def update_data():
     vein_pulsation_intensity = get_vein_pulsation_intensity(frame)
     pupil_response_time = get_pupil_response_time()
     ir_intensity = get_ir_intensity(frame)
-    
-    columns = ["filename", "blood_glucose", "height", "width", "channels", "pupil_size", "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", "pupil_circularity", "scleral_vein_density", "blink_rate", "ir_temperature", "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", "vein_pulsation_intensity"]
-    
+    scleral_vein_density = get_scleral_vein_density(frame)
+
+    columns = [
+        "filename", "blood_glucose", "height", "width", "channels", "pupil_size", 
+        "sclera_redness", "vein_prominence", "pupil_response_time", "ir_intensity", 
+        "scleral_vein_density", "pupil_circularity", "blink_rate", "ir_temperature", 
+        "tear_film_reflectivity", "pupil_dilation_rate", "sclera_color_balance", 
+        "vein_pulsation_intensity"
+    ]
+
     if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
         df = pd.DataFrame(columns=columns)
     else:
         df = pd.read_csv(labels_file)
-    
+
     for col in columns:
         if col not in df.columns:
             df[col] = np.nan  # Ensure all expected columns exist
-    
-    new_entry = pd.DataFrame([[filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, pupil_response_time, ir_intensity, np.nan, np.nan, np.nan, ir_temperature, tear_film_reflectivity, pupil_dilation_rate, sclera_color_balance, vein_pulsation_intensity]],
-                              columns=columns)
+
+    new_entry = pd.DataFrame([[
+        filename, "", height, width, channels, pupil_size, sclera_redness, vein_prominence, 
+        pupil_response_time, ir_intensity, scleral_vein_density, np.nan, np.nan, ir_temperature, 
+        tear_film_reflectivity, pupil_dilation_rate, sclera_color_balance, vein_pulsation_intensity
+    ]], columns=columns)
+
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(labels_file, index=False)
     print(f"New data added to CSV: {filename}")
