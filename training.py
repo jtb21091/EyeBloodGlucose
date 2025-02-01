@@ -9,6 +9,22 @@ from sklearn.metrics import mean_squared_error, r2_score
 labels_file = "eye_glucose_data/labels.csv"
 model_file = "eye_glucose_model.pkl"
 
+def remove_outliers(df):
+    """
+    Removes outliers from the dataset using the Interquartile Range (IQR) method.
+    """
+    Q1 = df["blood_glucose"].quantile(0.25)
+    Q3 = df["blood_glucose"].quantile(0.75)
+    IQR = Q3 - Q1
+
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    df_filtered = df[(df["blood_glucose"] >= lower_bound) & (df["blood_glucose"] <= upper_bound)]
+    print(f"Outliers removed. Dataset reduced from {len(df)} to {len(df_filtered)} rows.")
+    
+    return df_filtered
+
 def train_model():
     if not os.path.exists(labels_file):
         print("Error: Data file not found.")
@@ -19,6 +35,9 @@ def train_model():
     # Fill missing values instead of dropping them
     df.fillna({"vein_prominence": 0.0, "pupil_response_time": 0.2, "predicted_glucose": 0.0}, inplace=True)
     
+    # Remove outliers from the dataset
+    df = remove_outliers(df)
+
     print(f"Dataset size after cleaning: {len(df)} rows")
     
     if len(df) < 5:

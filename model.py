@@ -2,10 +2,15 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
+import joblib
 from datetime import datetime
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
 
 labels_file = "eye_glucose_data/labels.csv"
 image_dir = "eye_glucose_data/images"
+model_file = "eye_glucose_model.pkl"
 os.makedirs(image_dir, exist_ok=True)
 
 def capture_eye_image():
@@ -13,6 +18,9 @@ def capture_eye_image():
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return None, None
+    
+    # Wait for camera to stabilize
+    cv2.waitKey(500)  # Delay 500ms
     
     ret, frame = cap.read()
     cap.release()
@@ -33,7 +41,7 @@ def detect_pupil(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)  # Enhance contrast
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=15, maxRadius=100)
+    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1.5, 50, param1=50, param2=30, minRadius=10, maxRadius=100)
     
     if circles is not None:
         circles = np.uint16(np.around(circles))
@@ -49,15 +57,17 @@ def get_sclera_redness(image):
     lower_red = np.array([0, 50, 50])
     upper_red = np.array([10, 255, 255])
     mask = cv2.inRange(hsv, lower_red, upper_red)
-    return round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 10)
+    redness_intensity = round(np.sum(mask) / (mask.shape[0] * mask.shape[1]), 5)
+    return redness_intensity
 
 def get_vein_prominence(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    return round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 10)
+    edges = cv2.Canny(gray, 30, 100)  # Lowered threshold for finer details
+    vein_density = round(np.sum(edges) / (edges.shape[0] * edges.shape[1]), 5)
+    return vein_density
 
 def get_pupil_response_time():
-    return np.random.uniform(0.1, 0.4)  # Simulating random reaction time in seconds
+    return np.random.uniform(0.1, 0.4)  # Simulated placeholder value
 
 def update_data():
     filename, frame = capture_eye_image()
