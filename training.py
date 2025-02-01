@@ -3,28 +3,52 @@ import pandas as pd
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split, KFold, cross_val_score
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+
+from sklearn.model_selection import (
+    train_test_split, 
+    RandomizedSearchCV, 
+    learning_curve
+)
+from sklearn.linear_model import ElasticNet
 from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import RandomizedSearchCV
+
 from scipy.stats import uniform, randint
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class EyeGlucoseModel:
     def __init__(self, labels_file="eye_glucose_data/labels.csv", model_file="eye_glucose_model.pkl"):
+        """
+        Initialize the EyeGlucoseModel training class.
+        
+        Args:
+            labels_file: Path to the CSV file with data.
+            model_file: Path to save the best model.
+        """
         self.labels_file = labels_file
         self.model_file = model_file
         self.best_model = None
-        self.scaler = None
-        self.imputer = None
-        
+
     def remove_outliers(self, df, column="blood_glucose", n_std=3):
-        """Remove outliers using both IQR and standard deviation methods."""
+        """
+        Remove outliers using both Z-score and IQR methods.
+        
+        Args:
+            df: Input DataFrame.
+            column: The column on which to perform outlier removal.
+            n_std: Number of standard deviations for the Z-score threshold.
+        
+        Returns:
+            DataFrame with outliers removed.
+        """
         # Z-score method
         z_scores = np.abs((df[column] - df[column].mean()) / df[column].std())
         df_no_outliers = df[z_scores < n_std].copy()
@@ -38,11 +62,16 @@ class EyeGlucoseModel:
         df_no_outliers[column] = df_no_outliers[column].clip(lower=lower_bound, upper=upper_bound)
         
         removed_count = len(df) - len(df_no_outliers)
-        print(f"Removed {removed_count} outliers using combined Z-score and IQR methods")
+        logging.info(f"Removed {removed_count} outliers using combined Z-score and IQR methods")
         return df_no_outliers
 
     def prepare_data(self):
-        """Load and prepare the data for training."""
+        """
+        Load and prepare data for training.
+        
+        Returns:
+            A tuple (X, y) where X contains the features and y the target variable.
+        """
         if not os.path.exists(self.labels_file):
             raise FileNotFoundError(f"Data file not found: {self.labels_file}")
         
@@ -52,23 +81,29 @@ class EyeGlucoseModel:
         if len(df) < 5:
             raise ValueError(f"Not enough data to train (found {len(df)} rows). Need at least 5 rows.")
         
-        # Feature engineering (example - add your own based on domain knowledge)
-        df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour if 'timestamp' in df.columns else None
+        # Feature engineering: add time_of_day from timestamp if available
+        if 'timestamp' in df.columns:
+            df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour
         
         # Split features and target
         y = df["blood_glucose"].astype(float)
         X = df.drop(columns=["blood_glucose"])
         
-        # Remove non-numeric columns with warning
+        # Remove non-numeric columns with a warning
         non_numeric_cols = X.select_dtypes(exclude=['number']).columns
         if len(non_numeric_cols) > 0:
-            print(f"⚠️ Warning: Dropping non-numeric columns: {list(non_numeric_cols)}")
+            logging.warning(f"Dropping non-numeric columns: {list(non_numeric_cols)}")
             X = X.drop(columns=non_numeric_cols)
             
         return X, y
 
     def get_model_configurations(self):
-        """Define models with hyperparameter search spaces."""
+        """
+        Define a set of models and their hyperparameter search spaces.
+        
+        Returns:
+            A dictionary with model configurations.
+        """
         models = {
             "ElasticNet": {
                 "model": ElasticNet(),
@@ -96,7 +131,7 @@ class EyeGlucoseModel:
                 }
             },
             "Neural Network": {
-                "model": MLPRegressor(max_iter=1000, early_stopping=True),
+                "model": MLPRegressor(max_iter=1000, early_stopping=True, random_state=42),
                 "params": {
                     "hidden_layer_sizes": [(64, 32), (128, 64), (64, 64, 32)],
                     "activation": ["relu", "tanh"],
@@ -107,14 +142,54 @@ class EyeGlucoseModel:
         }
         return models
 
+    def plot_learning_curve(self, estimator, X_train, y_train, model_name):
+        """
+        Plot the learning curve (training and validation loss) for the given estimator.
+        
+        Args:
+            estimator: The estimator to evaluate.
+            X_train: Training features.
+            y_train: Training target.
+            model_name: Name of the model (for plot title).
+        """
+        train_sizes, train_scores, val_scores = learning_curve(
+            estimator,
+            X_train,
+            y_train,
+            scoring="neg_mean_squared_error",
+            cv=5,
+            n_jobs=-1,
+            train_sizes=np.linspace(0.1, 1.0, 10)
+        )
+        # Convert negative MSE to positive loss values
+        train_loss = -np.mean(train_scores, axis=1)
+        val_loss = -np.mean(val_scores, axis=1)
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(train_sizes, train_loss, 'o-', color="r", label="Training Loss")
+        plt.plot(train_sizes, val_loss, 'o-', color="g", label="Validation Loss")
+        plt.xlabel("Training Set Size")
+        plt.ylabel("Mean Squared Error")
+        plt.title(f"Learning Curve for {model_name}")
+        plt.legend(loc="best")
+        plt.grid(True)
+        plt.show()
+
     def train_model(self):
-        """Train and evaluate models using cross-validation and hyperparameter tuning."""
+        """
+        Train and evaluate models using cross-validation and hyperparameter tuning.
+        For each model, displays:
+          - Scatter plot of actual vs. predicted values.
+          - Learning curve (training and validation loss).
+        
+        After evaluating all models, the best one is saved.
+        """
         X, y = self.prepare_data()
         
         # Create training and validation sets
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        # Create preprocessing pipeline
+        # Create preprocessing pipeline (imputation and scaling)
         preprocessor = Pipeline([
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler())
@@ -125,15 +200,15 @@ class EyeGlucoseModel:
         models = self.get_model_configurations()
         
         for name, config in models.items():
-            print(f"\nTraining {name}...")
+            logging.info(f"\nTraining {name}...")
             
-            # Create pipeline with preprocessing and model
+            # Create a pipeline that first preprocesses and then fits the model
             pipeline = Pipeline([
                 ('preprocessor', preprocessor),
                 ('regressor', config['model'])
             ])
             
-            # Perform randomized search with cross-validation
+            # Set up RandomizedSearchCV for hyperparameter tuning
             search = RandomizedSearchCV(
                 pipeline,
                 {f"regressor__{key}": value for key, value in config['params'].items()},
@@ -146,42 +221,49 @@ class EyeGlucoseModel:
             
             search.fit(X_train, y_train)
             
-            # Evaluate on validation set
+            # Evaluate on the validation set
             y_pred = search.predict(X_val)
             r2 = r2_score(y_val, y_pred)
             mse = mean_squared_error(y_val, y_pred)
             mae = mean_absolute_error(y_val, y_pred)
             
-            print(f"Best parameters: {search.best_params_}")
-            print(f"Metrics for {name}:")
-            print(f"R² Score: {r2:.5f}")
-            print(f"MSE: {mse:.5f}")
-            print(f"MAE: {mae:.5f}")
+            logging.info(f"Best parameters for {name}: {search.best_params_}")
+            logging.info(f"Metrics for {name}:")
+            logging.info(f"  R² Score: {r2:.5f}")
+            logging.info(f"  MSE: {mse:.5f}")
+            logging.info(f"  MAE: {mae:.5f}")
             
-            # Plot actual vs predicted values
+            # Plot actual vs. predicted values
             plt.figure(figsize=(10, 6))
             plt.scatter(y_val, y_pred, alpha=0.5)
             plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'r--', lw=2)
             plt.xlabel("Actual Values")
             plt.ylabel("Predicted Values")
-            plt.title(f"{name}: Actual vs Predicted Values")
+            plt.title(f"{name}: Actual vs. Predicted Values")
             plt.show()
             
+            # Plot the learning curve (training and validation loss)
+            self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
+            
+            # Keep track of the best model based on R² score
             if r2 > best_score:
                 best_score = r2
                 self.best_model = search.best_estimator_
                 best_model_name = name
         
-        print(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
+        logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.save_model()
         
     def save_model(self):
-        """Save the trained model and preprocessing pipeline."""
+        """
+        Save the best trained model (including the preprocessing pipeline) to disk.
+        """
         if self.best_model is None:
             raise ValueError("No model has been trained yet.")
         
         joblib.dump(self.best_model, self.model_file)
-        print(f"Best model saved as: {self.model_file}")
+        logging.info(f"Best model saved as: {self.model_file}")
+
 
 if __name__ == "__main__":
     model_trainer = EyeGlucoseModel()
