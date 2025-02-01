@@ -32,32 +32,6 @@ class EyeGlucoseModel:
         self.model_file = model_file
         self.best_model = None
 
-    def remove_outliers(self, df):
-        """
-        Remove outliers based only on all numeric variables (except 'blood_glucose') using a Z-score threshold.
-        If a row contains an outlier (Z-score > 6) in any other variable, the entire row is removed.
-        
-        Args:
-            df: Input DataFrame.
-        
-        Returns:
-            DataFrame with outliers removed.
-        """
-        df_clean = df.copy()
-        numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols.remove("blood_glucose")  # Exclude blood_glucose from outlier detection
-        
-        # Identify outliers using Z-score with a threshold of 6
-        z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 6).any(axis=1)  # Flag rows where any variable has a Z-score > 6
-        
-        df_clean = df_clean[~outliers_z].copy()
-        
-        removed_count = len(df) - len(df_clean)
-        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
-        
-        return df_clean
-
     def prepare_data(self):
         """
         Load and prepare data for training.
@@ -68,8 +42,8 @@ class EyeGlucoseModel:
         if not os.path.exists(self.labels_file):
             raise FileNotFoundError(f"Data file not found: {self.labels_file}")
         
+        # Load the CSV file directly without removing outliers
         df = pd.read_csv(self.labels_file)
-        df = self.remove_outliers(df)
         
         if len(df) < 5:
             raise ValueError(f"Not enough data to train (found {len(df)} rows). Need at least 5 rows.")
