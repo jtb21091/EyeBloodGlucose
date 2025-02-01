@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import warnings
 from datetime import datetime
+from collections import deque
 import joblib
 
 model_file = "eye_glucose_model.pkl"
@@ -18,6 +19,9 @@ else:
 
 # Load OpenCV's pre-trained eye detection model
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
+# Rolling average buffer for smoothing glucose predictions
+glucose_buffer = deque(maxlen=60)  # Store last 60 glucose values
 
 def extract_features(image):
     """Extracts real-time eye features, including IR intensity for low-light detection."""
@@ -49,7 +53,7 @@ def extract_features(image):
     return features
 
 def predict_blood_glucose(features):
-    """Uses the trained model to predict blood glucose."""
+    """Uses the trained model to predict blood glucose and applies smoothing."""
     try:
         # Convert to DataFrame to retain feature names
         input_data = pd.DataFrame([features], columns=trained_features)
@@ -57,14 +61,19 @@ def predict_blood_glucose(features):
         # Suppress Scikit-Learn warnings about feature names
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            prediction = model.predict(input_data)
+            prediction = model.predict(input_data)[0]
 
-        return round(prediction[0], 2) if prediction is not None else "Error"
+        # Store latest prediction in buffer
+        glucose_buffer.append(prediction)
+
+        # Return smoothed glucose value (rolling average)
+        return round(np.mean(glucose_buffer), 2)
+
     except Exception:
         return "Error"
 
 def live_eye_analysis():
-    """Real-time eye glucose monitoring with adaptive detection for low-light conditions."""
+    """Real-time eye glucose monitoring with stricter detection and smoother readings."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         return
@@ -85,13 +94,13 @@ def live_eye_analysis():
         # Compute IR intensity level
         ir_intensity = np.mean(gray)
 
-        # **New Fix: Use IR intensity if eyes were recently detected**
+        # **New Fix: Eyes must be detected at least once before using IR**
         if len(eyes) > 0:  # Eyes detected in light or IR-assisted
             last_eye_detected_time = datetime.now()  # Update last seen time
 
-            # Predict every 0.5 seconds when eyes are detected
+            # Predict every 1 seconds when eyes are detected
             current_time = datetime.now()
-            if (current_time - last_prediction_time).total_seconds() > 0.5:
+            if (current_time - last_prediction_time).total_seconds() > 1:
                 features = extract_features(frame)
                 glucose_prediction = predict_blood_glucose(features)
                 last_prediction_time = current_time
@@ -100,8 +109,8 @@ def live_eye_analysis():
                 if glucose_prediction != last_displayed_glucose:
                     last_displayed_glucose = glucose_prediction
 
-        elif last_eye_detected_time is not None and (datetime.now() - last_eye_detected_time).total_seconds() < 3 and ir_intensity < 50:
-            # If no eyes detected but IR intensity is low AND eyes were recently detected (within 3 sec)
+        elif last_eye_detected_time is not None and (datetime.now() - last_eye_detected_time).total_seconds() < 3 and ir_intensity > 50:
+            # If no eyes detected but IR intensity is high AND eyes were recently detected (within 3 sec)
             current_time = datetime.now()
             if (current_time - last_prediction_time).total_seconds() > 0.5:
                 features = extract_features(frame)
