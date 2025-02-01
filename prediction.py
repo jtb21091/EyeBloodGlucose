@@ -17,8 +17,9 @@ else:
     print("❌ Standard Model not found. Exiting.")
     exit()
 
-# Load OpenCV's pre-trained eye detection model
-eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+# Load OpenCV's pre-trained eye detection models
+left_eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml')
+right_eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
 
 # Rolling average buffer for smoothing glucose predictions
 glucose_buffer = deque(maxlen=60)  # Store last 60 glucose values
@@ -89,16 +90,19 @@ def live_eye_analysis():
         
         # Convert frame to grayscale for eye detection and IR intensity analysis
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        
+
+        # Ensure detectMultiScale does not return None
+        left_eye = left_eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)) if left_eye_cascade is not None else []
+        right_eye = right_eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)) if right_eye_cascade is not None else []
+
         # Compute IR intensity level
         ir_intensity = np.mean(gray)
 
-        # **New Fix: Eyes must be detected at least once before using IR**
-        if len(eyes) > 0:  # Eyes detected in light or IR-assisted
+        # **Enhanced Fix: Detect open eyes separately; stop if both are missing**
+        if (left_eye is not None and len(left_eye) > 0) or (right_eye is not None and len(right_eye) > 0):  # Open eyes detected
             last_eye_detected_time = datetime.now()  # Update last seen time
 
-            # Predict every 1 seconds when eyes are detected
+            # Predict every 1 second when eyes are detected
             current_time = datetime.now()
             if (current_time - last_prediction_time).total_seconds() > 1:
                 features = extract_features(frame)
@@ -112,7 +116,7 @@ def live_eye_analysis():
         elif last_eye_detected_time is not None and (datetime.now() - last_eye_detected_time).total_seconds() < 3 and ir_intensity > 50:
             # If no eyes detected but IR intensity is high AND eyes were recently detected (within 3 sec)
             current_time = datetime.now()
-            if (current_time - last_prediction_time).total_seconds() > 0.5:
+            if (current_time - last_prediction_time).total_seconds() > 1:
                 features = extract_features(frame)
                 glucose_prediction = predict_blood_glucose(features)
                 last_prediction_time = current_time
@@ -120,8 +124,8 @@ def live_eye_analysis():
                 if glucose_prediction != last_displayed_glucose:
                     last_displayed_glucose = glucose_prediction
         else:
-            # If no eyes and no IR, do not predict
-            last_displayed_glucose = "No eyes detected"
+            # If no open eyes, assume they are closed; stop glucose reading
+            last_displayed_glucose = "No eyes detected - No glucose reading."
 
         # Display prediction or warning on screen
         display_text = f"Glucose: {last_displayed_glucose}" if isinstance(last_displayed_glucose, (int, float)) else last_displayed_glucose
