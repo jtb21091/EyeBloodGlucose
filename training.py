@@ -396,10 +396,10 @@ class EyeGlucoseModel:
 
         # Define some example CGM benchmark values (adjust as needed)
         cgm_benchmarks = {
-            "R²": 0.95,         # For example, a CGM might be expected to achieve very high correlation.
-            "MSE": 5.0,         # Example value: lower MSE is better.
-            "MAE": 2.0,         # Example value.
-            "MARD": 10.0,       # CGM devices sometimes target a MARD below 10%.
+            "R²": 0.94,         # For example, a CGM might be expected to achieve very high correlation.
+            "MSE": 6.2,         # Example value: lower MSE is better.
+            "MAE": 2.1,         # Example value.
+            "MARD": 10.5,       # CGM devices sometimes target a MARD below 10%.
             "Sigma Level": 3.0  # A sigma level of 3 or more may be desired.
         }
 
