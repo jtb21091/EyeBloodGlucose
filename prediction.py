@@ -42,23 +42,34 @@ def extract_features(image):
     
     return features
 
+print(model.get_spec().description)
+print(f"🔎 Input to Core ML: {input_data.shape}, Expected: (1, 16)")
+print(f"Features provided: {features.keys()}")
+print(f"Trained Features: {trained_features}")
+
+import numpy as np
+
 def predict_blood_glucose(features):
     """Uses Core ML model to predict blood glucose."""
     try:
-        # Convert dictionary values into a list (ensure feature order is correct)
+        # Ensure the features dictionary contains all 16 required keys
         input_data = np.array([features[name] for name in trained_features if name in features], dtype=np.float32)
 
-        # Reshape to match model input (if it's expecting a single tensor)
-        input_dict = {"input": input_data.reshape(1, -1)}
-
-        # Predict with Core ML
-        prediction = model.predict(input_dict)["blood_glucose"]
+        # Core ML requires correctly formatted input
+        input_dict = {"input": input_data.reshape(1, -1)}  # Match Core ML's expected input shape
         
-        return round(prediction, 2)
+        # Make prediction
+        prediction = model.predict(input_dict)
+
+        # Extract prediction result (ensure correct key matches "prediction")
+        glucose_value = prediction.get("prediction", None)  # Adjust based on actual model output key
+        
+        return round(glucose_value[0], 2) if glucose_value is not None else "Error"
 
     except Exception as e:
-        print(f"Prediction error: {str(e)}")
+        print(f"❌ Prediction error: {str(e)}")
         return "Error"
+
 
 def live_eye_analysis():
     """Real-time eye glucose monitoring."""
