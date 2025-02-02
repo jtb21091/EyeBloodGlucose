@@ -86,13 +86,19 @@ class EyeGlucoseModel:
             df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour
         
         y = df["blood_glucose"].astype(float)
-        
-        # Updated list: only analyze the four features of interest
         reduced_features = [
-            'scleral_vein_density',    # p = 0.0388
-            'tear_film_reflectivity',  # p = 0.0163
-            'vein_pulsation_intensity',# p = 0.0469
-            'birefringence_index'      # p = 0.0000118
+            'pupil_size', 
+            'sclera_redness', 
+            'vein_prominence', 
+            'pupil_response_time', 
+            'ir_intensity',
+            'scleral_vein_density', 
+            'ir_temperature', 
+            'tear_film_reflectivity', 
+            'pupil_dilation_rate', 
+            'sclera_color_balance', 
+            'vein_pulsation_intensity', 
+            'birefringence_index'
         ]
         X = df[reduced_features]
     
@@ -106,12 +112,6 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
-        In this trimmed version we keep:
-          - SVR
-          - Random Forest
-          - Gradient Boosting
-          - Neural Network (MLPRegressor)
-          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
         """
         models = {
             "SVR": {
@@ -137,7 +137,6 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
-                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
                     "subsample": uniform(0.6, 0.4)
                 }
             },
@@ -208,6 +207,28 @@ class EyeGlucoseModel:
         plt.grid(True)
         plt.show()
 
+    def plot_weighted_histogram(self, data, num_bins=10):
+        """
+        Plot a weighted histogram using Option 3.
+        Each data point is weighted by the inverse of its bin's count so that each bin contributes equally.
+        """
+        data = np.array(data)
+        # Compute the bin edges using the desired number of bins
+        bin_edges = np.histogram_bin_edges(data, bins=num_bins)
+        # Count the number of points in each bin
+        counts, _ = np.histogram(data, bins=bin_edges)
+        # Determine which bin each data point falls into (np.digitize returns 1-indexed bins)
+        bin_indices = np.digitize(data, bins=bin_edges, right=True)
+        # Assign weights so that each data point in a bin has weight = 1 / (number of points in that bin)
+        weights = np.array([1.0 / counts[i - 1] if i > 0 and counts[i - 1] > 0 else 0 for i in bin_indices])
+        
+        plt.figure(figsize=(10, 6))
+        plt.hist(data, bins=bin_edges, weights=weights, edgecolor='black')
+        plt.xlabel("Blood Glucose")
+        plt.ylabel("Normalized Frequency")
+        plt.title("Weighted Histogram with Balanced Bin Contribution")
+        plt.show()
+
     def save_metrics_to_file(self, best_model_name, metrics, cgm_benchmarks, filename="best_model_metrics.csv"):
         rows = [
             {"Metric": "R²", "Best Model Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks["R²"]},
@@ -223,7 +244,12 @@ class EyeGlucoseModel:
         logging.info(f"Best model metrics saved to: {filename}")
 
     def train_model(self):
+        # Prepare the data
         X, y = self.prepare_data()
+        
+        # Plot the weighted histogram for blood_glucose using Option 3
+        self.plot_weighted_histogram(y, num_bins=10)
+
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
         # --- Default Preprocessing Pipeline ---
