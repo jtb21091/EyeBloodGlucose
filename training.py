@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import logging
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import ElasticNet, LinearRegression
+from sklearn.linear_model import ElasticNet, LinearRegression, GammaRegressor, PoissonRegressor, TweedieRegressor, BayesianRidge, QuantileRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
@@ -15,6 +15,20 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
+
+# Try to import additional ensemble models if installed.
+try:
+    from xgboost import XGBRegressor
+except ImportError:
+    XGBRegressor = None
+try:
+    from lightgbm import LGBMRegressor
+except ImportError:
+    LGBMRegressor = None
+try:
+    from catboost import CatBoostRegressor
+except ImportError:
+    CatBoostRegressor = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -96,12 +110,14 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
-        This configuration now includes:
-          - ElasticNet
-          - SVR
-          - Random Forest Regressor
-          - Gradient Boosting Regressor
+        The dictionary now includes:
+          - ElasticNet and SVR (previous models)
+          - Tree-based models: Random Forest, Gradient Boosting,
+            plus XGBoost, LightGBM, CatBoost (if installed)
           - Neural Network (MLPRegressor)
+          - GLMs: Gamma Regression, Poisson Regression, Inverse Gaussian Regression (via TweedieRegressor)
+          - Bayesian Regression (BayesianRidge)
+          - Quantile Regression (QuantileRegressor)
         """
         models = {
             "ElasticNet": {
@@ -145,8 +161,74 @@ class EyeGlucoseModel:
                     "alpha": uniform(0.0001, 0.01),
                     "learning_rate_init": uniform(0.0001, 0.01)
                 }
+            },
+            # --- Generalized Linear Models ---
+            "Gamma Regression": {
+                "model": GammaRegressor(max_iter=1000),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0)
+                }
+            },
+            "Poisson Regression": {
+                "model": PoissonRegressor(max_iter=1000),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0)
+                }
+            },
+            "Inverse Gaussian Regression": {
+                "model": TweedieRegressor(power=3, link="log", max_iter=1000),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0)
+                }
+            },
+            # --- Bayesian and Quantile Regression ---
+            "Bayesian Ridge": {
+                "model": BayesianRidge(),
+                "params": {
+                    "alpha_1": uniform(1e-6, 1e-2),
+                    "lambda_1": uniform(1e-6, 1e-2)
+                }
+            },
+            "Quantile Regression": {
+                "model": QuantileRegressor(quantile=0.5, solver='highs'),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0),
+                    "quantile": [0.25, 0.5, 0.75]
+                }
             }
         }
+
+        # --- Additional Tree-Based Models if installed ---
+        if XGBRegressor is not None:
+            models["XGBoost"] = {
+                "model": XGBRegressor(objective='reg:squarederror', verbosity=0, random_state=42),
+                "params": {
+                    "n_estimators": randint(100, 500),
+                    "learning_rate": uniform(0.01, 0.3),
+                    "max_depth": randint(3, 15),
+                    "subsample": uniform(0.6, 1.0),
+                    "colsample_bytree": uniform(0.6, 1.0)
+                }
+            }
+        if LGBMRegressor is not None:
+            models["LightGBM"] = {
+                "model": LGBMRegressor(random_state=42),
+                "params": {
+                    "n_estimators": randint(100, 500),
+                    "learning_rate": uniform(0.01, 0.3),
+                    "max_depth": randint(3, 15),
+                    "num_leaves": randint(20, 100)
+                }
+            }
+        if CatBoostRegressor is not None:
+            models["CatBoost"] = {
+                "model": CatBoostRegressor(random_state=42, silent=True),
+                "params": {
+                    "iterations": randint(100, 500),
+                    "learning_rate": uniform(0.01, 0.3),
+                    "depth": randint(3, 15)
+                }
+            }
         return models
 
     def plot_learning_curve(self, estimator, X_train, y_train, model_name):
