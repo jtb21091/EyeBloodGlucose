@@ -113,8 +113,8 @@ class EyeGlucoseMonitor:
         self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
         
-        # Rolling average: store the last 60 predictions
-        self.glucose_buffer = deque(maxlen=60)
+        # Rolling average: store the last 300 predictions
+        self.glucose_buffer = deque(maxlen=300)
         
         self.latest_prediction = None
         self.last_prediction = None
