@@ -9,9 +9,11 @@ if "blood_glucose" in df.columns:
     # Extract the blood_glucose column
     blood_glucose = df["blood_glucose"]
     
-    # Calculate the mean
+    # Calculate the mean and median
     mean_value = blood_glucose.mean()
+    median_value = blood_glucose.median()
     print("Mean Blood Glucose Value:", mean_value)
+    print("Median Blood Glucose Value:", median_value)
     
     # Plot a histogram
     plt.figure(figsize=(10, 6))
@@ -20,6 +22,10 @@ if "blood_glucose" in df.columns:
     # Add a vertical line at the mean
     plt.axvline(mean_value, color='red', linestyle='--', linewidth=2, 
                 label=f'Mean: {mean_value:.2f}')
+    
+    # Add a vertical line at the median
+    plt.axvline(median_value, color='blue', linestyle='-.', linewidth=2, 
+                label=f'Median: {median_value:.2f}')
     
     plt.title("Histogram of Blood Glucose")
     plt.xlabel("Blood Glucose (mg/dL)")
