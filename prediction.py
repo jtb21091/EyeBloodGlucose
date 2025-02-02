@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 import logging
 
@@ -105,18 +106,16 @@ class EyeGlucoseMonitor:
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
         self.eye_cascades = {
-            "left": cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'
-            ),
-            "right": cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml'
-            )
+            "left": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'),
+            "right": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
         }
         self.last_valid_detection_time = time.time()
         self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
         
-        # Update prediction immediately (no running average)
+        # Rolling average: store the last 60 predictions
+        self.glucose_buffer = deque(maxlen=60)
+        
         self.latest_prediction = None
         self.last_prediction = None
         self.constant_count = 0  # Counter for constant predictions
@@ -144,15 +143,11 @@ class EyeGlucoseMonitor:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
-        faces = self.face_cascade.detectMultiScale(
-            enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60)
-        )
+        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60))
         # Try a blurred image if no faces are found under dark conditions.
         if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-            faces = self.face_cascade.detectMultiScale(
-                blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50)
-            )
+            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50))
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
         if len(faces) > 0:
             # Choose the largest face.
@@ -160,12 +155,8 @@ class EyeGlucoseMonitor:
             x, y, w, h = face
             detection.face_rect = face  # Save the face bounding box.
             face_roi = enhanced[y:y+h, x:x+w]
-            left_eyes = self.eye_cascades["left"].detectMultiScale(
-                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
-            )
-            right_eyes = self.eye_cascades["right"].detectMultiScale(
-                face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
-            )
+            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
             if ir_intensity < self.MIN_IR_INTENSITY:
                 detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
             else:
@@ -240,7 +231,9 @@ class EyeGlucoseMonitor:
     def predict_glucose(self, features: Dict):
         """
         Predict blood glucose from features.
-        Logs a warning if the prediction remains constant for many frames.
+        The prediction is added to a rolling buffer of 5 values, and the displayed value
+        is the average of these 5 predictions.
+        Logs a warning if the rolling average remains constant for many frames.
         """
         result = None
         try:
@@ -256,18 +249,24 @@ class EyeGlucoseMonitor:
             result = None
 
         with self.prediction_lock:
-            # Use a tolerance (e.g., 0.1 mg/dL) for comparing predictions.
-            if (result is not None and self.last_prediction is not None and 
-                abs(result - self.last_prediction) < self.prediction_tolerance):
+            if result is not None:
+                self.glucose_buffer.append(result)
+                averaged_result = np.mean(self.glucose_buffer)
+            else:
+                averaged_result = None
+
+            # Use a tolerance (e.g., 0.1 mg/dL) for comparing averaged predictions.
+            if (averaged_result is not None and self.last_prediction is not None and 
+                abs(averaged_result - self.last_prediction) < self.prediction_tolerance):
                 self.constant_count += 1
             else:
                 self.constant_count = 0
 
-            self.latest_prediction = result
-            self.last_prediction = result
+            self.latest_prediction = averaged_result
+            self.last_prediction = averaged_result
 
             if self.constant_count > 20:
-                logging.warning("Prediction remains constant for over 20 frames. Check feature extraction or model input.")
+                logging.warning("Rolling average prediction remains constant for over 20 frames. Check feature extraction or model input.")
                 logging.warning(f"Latest extracted features: {self.last_features}")
 
     def run(self):
@@ -276,21 +275,15 @@ class EyeGlucoseMonitor:
             print("Could not open webcam.")
             return
 
-        frame_counter = 0  # Initialize frame counter
-
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            frame_counter += 1
-
             detection = self.detect_face_and_eyes(frame)
             if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
-                # Update prediction only every 10 frames
-                if frame_counter % 10 == 0:
-                    features = self.extract_features(frame)
-                    self.predict_glucose(features)
+                features = self.extract_features(frame)
+                self.predict_glucose(features)
 
                 # Draw the detected face rectangle (blue)
                 if detection.face_rect is not None:
