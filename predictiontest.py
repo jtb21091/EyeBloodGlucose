@@ -420,8 +420,8 @@ class EyeGlucoseMonitor:
             self.last_features = features
 
     def run(self):
-        # Create the live plot on the main thread.
-        plt.ion()  # Interactive mode on.
+        # Enable interactive mode for live updating of the plot.
+        plt.ion()
         fig, ax = plt.subplots()
         line_inst, = ax.plot([], [], label="Instantaneous", color="green")
         line_avg, = ax.plot([], [], label="Smoothed", color="orange")
@@ -480,15 +480,21 @@ class EyeGlucoseMonitor:
             cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
             cv2.imshow("Blood Glucose", frame)
+            
+            # Pressing 'q' in the OpenCV window stops the webcam capture.
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
-            # A brief pause to update the plot.
             plt.pause(0.001)
 
+        # Stop the webcam and close the OpenCV window.
         cap.release()
         cv2.destroyAllWindows()
+
+        # Turn off interactive mode so that plt.show() blocks.
         plt.ioff()
+        print("Webcam capture ended. The graph will remain open until you close it manually.")
+        # This call blocks until you manually close the Matplotlib figure window.
         plt.show()
 
 if __name__ == "__main__":
