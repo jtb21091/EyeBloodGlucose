@@ -70,10 +70,10 @@ class EyeGlucoseModel:
         if "blood_glucose" in numeric_cols:
             numeric_cols.remove("blood_glucose")
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 2).any(axis=1)
+        outliers_z = (z_scores > 6).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
         removed_count = len(df) - len(df_clean)
-        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 2) in at least one non-blood_glucose variable")
+        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
         return df_clean
 
     def prepare_data(self):
