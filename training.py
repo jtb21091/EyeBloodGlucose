@@ -11,7 +11,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
 
@@ -20,8 +20,12 @@ from sklearn.svm import SVR                   # Support Vector Regressor
 from sklearn.neighbors import KNeighborsRegressor  # KNN Regressor
 from sklearn.tree import DecisionTreeRegressor     # Decision Tree Regressor
 
+# Import XGBoost as an additional model option
+from xgboost import XGBRegressor
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 #########################################
 # Helper functions to compute extra metrics
@@ -85,7 +89,8 @@ class EyeGlucoseModel:
         """
         df_clean = df.copy()
         numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols.remove("blood_glucose")  # Exclude target from outlier detection
+        if "blood_glucose" in numeric_cols:
+            numeric_cols.remove("blood_glucose")  # Exclude target from outlier detection
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
         outliers_z = (z_scores > 3).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
@@ -208,6 +213,15 @@ class EyeGlucoseModel:
                 "params": {
                     # (Optional tuning for the final estimator could be added)
                 }
+            },
+            "XGBoost": {
+                "model": XGBRegressor(objective='reg:squarederror', random_state=42),
+                "params": {
+                    "n_estimators": randint(100, 500),
+                    "learning_rate": uniform(0.01, 0.3),
+                    "max_depth": randint(3, 15),
+                    "subsample": uniform(0.6, 1.0)
+                }
             }
         }
         return models
@@ -271,21 +285,27 @@ class EyeGlucoseModel:
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Build the preprocessing pipeline (optionally including polynomial features)
+        # --- Preprocessing Pipeline ---
+        # Option to use polynomial features:
         use_poly_features = False
+        
+        # Option to use RobustScaler instead of StandardScaler (helpful if some outliers remain)
+        use_robust_scaler = False  # Change to True to use RobustScaler
+        scaler = RobustScaler() if use_robust_scaler else StandardScaler()
+
         if use_poly_features:
             preprocessor = Pipeline([
                 ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', StandardScaler()),
+                ('scaler', scaler),
                 ('poly', PolynomialFeatures(degree=2, include_bias=False))
             ])
         else:
             preprocessor = Pipeline([
                 ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', StandardScaler())
+                ('scaler', scaler)
             ])
 
-        # These variables will track the best model and its metrics.
+        # Variables to track the best model
         best_score = float('-inf')
         best_model_name = None
         best_estimator = None
@@ -296,7 +316,7 @@ class EyeGlucoseModel:
         best_sigma = None
 
         models = self.get_model_configurations()
-        n_iter_search = 50
+        n_iter_search = 100  # Increased number of iterations for better hyperparameter exploration
 
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
@@ -304,17 +324,20 @@ class EyeGlucoseModel:
                 ('preprocessor', preprocessor),
                 ('regressor', config['model'])
             ])
+            # Note: Changing scoring to 'neg_mean_squared_error' to directly minimize MSE.
             search = RandomizedSearchCV(
                 pipeline,
                 {f"regressor__{key}": value for key, value in config['params'].items()},
                 n_iter=n_iter_search,
                 cv=5,
-                scoring='r2',
+                scoring='neg_mean_squared_error',
                 n_jobs=-1,
                 random_state=42
             )
             search.fit(X_train, y_train)
             y_pred = search.predict(X_val)
+            
+            # Compute metrics
             r2 = r2_score(y_val, y_pred)
             mse = mean_squared_error(y_val, y_pred)
             mae = mean_absolute_error(y_val, y_pred)
@@ -379,7 +402,7 @@ class EyeGlucoseModel:
                 plt.grid(True)
                 plt.show()
             
-            # Update the best model if this one has a higher R² score.
+            # Update the best model based on R² score (or adjust to use a different metric if desired)
             if r2 > best_score:
                 best_score = r2
                 best_estimator = search.best_estimator_
