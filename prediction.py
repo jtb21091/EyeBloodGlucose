@@ -113,19 +113,21 @@ class EyeGlucoseMonitor:
         self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
         
-        # Rolling average: store the last 60 predictions
-        self.glucose_buffer = deque(maxlen=60)
+        # Instead of a rolling buffer, we'll keep both instantaneous and EMA-smoothed predictions.
+        self.latest_smoothed_prediction = None
+        self.latest_instantaneous_prediction = None
+        self.last_instantaneous_prediction = None  # For computing rate-of-change
         
-        self.latest_prediction = None
-        self.last_prediction = None
-        self.constant_count = 0  # Counter for constant predictions
+        # Tolerance for considering predictions "constant" (in mg/dL)
+        self.prediction_tolerance = 0.1
+        
+        # EMA smoothing factor (alpha): closer to 1 => more responsive, closer to 0 => more smoothing.
+        self.alpha = 0.005
+
         self.last_features = None  # Store the most recent feature dictionary
 
         self.MIN_EYE_ASPECT_RATIO = 0.2  # Threshold for eyes open
         self.MIN_IR_INTENSITY = 30       # Threshold for dark conditions
-
-        # Tolerance for considering predictions "constant" (in mg/dL)
-        self.prediction_tolerance = 0.1
 
     def _load_model(self) -> Any:
         if os.path.exists(self.model_path):
@@ -231,9 +233,8 @@ class EyeGlucoseMonitor:
     def predict_glucose(self, features: Dict):
         """
         Predict blood glucose from features.
-        The prediction is added to a rolling buffer of 5 values, and the displayed value
-        is the average of these 5 predictions.
-        Logs a warning if the rolling average remains constant for many frames.
+        Uses both the instantaneous prediction from the model and an exponential moving average (EMA)
+        for smoothing. Also logs any rapid changes in the instantaneous prediction.
         """
         result = None
         try:
@@ -249,25 +250,31 @@ class EyeGlucoseMonitor:
             result = None
 
         with self.prediction_lock:
+            # Save the instantaneous prediction
             if result is not None:
-                self.glucose_buffer.append(result)
-                averaged_result = np.mean(self.glucose_buffer)
+                self.latest_instantaneous_prediction = result
             else:
-                averaged_result = None
+                self.latest_instantaneous_prediction = None
 
-            # Use a tolerance (e.g., 0.1 mg/dL) for comparing averaged predictions.
-            if (averaged_result is not None and self.last_prediction is not None and 
-                abs(averaged_result - self.last_prediction) < self.prediction_tolerance):
-                self.constant_count += 1
+            # Update EMA (smoothed prediction)
+            if result is not None:
+                if self.latest_smoothed_prediction is None:
+                    self.latest_smoothed_prediction = result
+                else:
+                    self.latest_smoothed_prediction = self.alpha * result + (1 - self.alpha) * self.latest_smoothed_prediction
             else:
-                self.constant_count = 0
+                self.latest_smoothed_prediction = None
 
-            self.latest_prediction = averaged_result
-            self.last_prediction = averaged_result
+            # Compute rate of change (derivative) for the instantaneous prediction.
+            if self.last_instantaneous_prediction is not None and result is not None:
+                rate_of_change = result - self.last_instantaneous_prediction
+                # Log if the change is abrupt; adjust the threshold as needed.
+                if abs(rate_of_change) > 5:  # Threshold value (mg/dL), adjust based on your data
+                    logging.info(f"High rate of change detected: {rate_of_change:.2f} mg/dL")
+            self.last_instantaneous_prediction = result
 
-            if self.constant_count > 1000:
-                logging.warning("Rolling average prediction remains constant for over 100 frames. Check feature extraction or model input.")
-                logging.warning(f"Latest extracted features: {self.last_features}")
+            # Save the features for debugging purposes
+            self.last_features = features
 
     def run(self):
         cap = cv2.VideoCapture(0)
@@ -297,11 +304,15 @@ class EyeGlucoseMonitor:
                         cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 0, 255), 2)
             else:
                 with self.prediction_lock:
-                    self.latest_prediction = None
+                    self.latest_smoothed_prediction = None
+                    self.latest_instantaneous_prediction = None
 
+            # Display both instantaneous and smoothed (EMA) predictions.
             with self.prediction_lock:
-                text = f"{self.latest_prediction:.1f} mg/dL" if self.latest_prediction is not None else "No Reading"
-            cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+                inst_text = f"Inst: {self.latest_instantaneous_prediction:.1f} mg/dL" if self.latest_instantaneous_prediction is not None else "Inst: No Reading"
+                smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
+            cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
             cv2.imshow("Blood Glucose", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
