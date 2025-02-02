@@ -4,11 +4,14 @@ import pandas as pd
 import numpy as np
 import joblib
 from datetime import datetime
-from collections import deque
 from typing import Dict, Any
 import threading
 import time
 from dataclasses import dataclass
+import logging
+
+# Set logging to show warnings (and errors) only.
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define the expected feature order (must match training, ignoring the first two columns)
 FEATURES_ORDER = [
@@ -31,7 +34,7 @@ def get_birefringence_index(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return round(np.var(gray) / 255.0, 5)  # Normalized variance as an index
     except Exception:
-        return 0.0  # Default fallback value
+        return 0.0  # Fallback value
 
 # ---------------------------
 # Feature Extraction Functions
@@ -47,7 +50,7 @@ def get_vein_prominence(image):
     return np.random.uniform(0, 10)
 
 def get_ir_temperature(image):
-    # For demonstration, we compute IR temperature from the mean of the red channel.
+    # Compute IR temperature from the mean of the red channel.
     return round(np.mean(image[:, :, 2]), 5)
 
 def get_tear_film_reflectivity(image):
@@ -109,27 +112,32 @@ class EyeGlucoseMonitor:
                 cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml'
             )
         }
-        self.last_prediction_time = time.time()
-        self.last_valid_detection_time = time.time()  # For hysteresis
-        self.invalid_detection_threshold = 3.0         # Seconds without valid detection before clearing reading
+        self.last_valid_detection_time = time.time()
+        self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
         
-        # NOTE: Adjust the running average buffer size here.
-        # The following deque will store the last 60 predictions for running average computation.
-        self.glucose_buffer = deque(maxlen=60)
-        
+        # Update prediction immediately (no running average)
         self.latest_prediction = None
-        self.MIN_EYE_ASPECT_RATIO = 0.2  # If computed ratio is above this, eyes are open.
-        self.MIN_IR_INTENSITY = 30       # Threshold below which conditions are considered "dark."
+        self.last_prediction = None
+        self.constant_count = 0  # Counter for constant predictions
+        self.last_features = None  # Store the most recent feature dictionary
+
+        self.MIN_EYE_ASPECT_RATIO = 0.2  # Threshold for eyes open
+        self.MIN_IR_INTENSITY = 30       # Threshold for dark conditions
+
+        # Tolerance for considering predictions "constant" (in mg/dL)
+        self.prediction_tolerance = 0.1
 
     def _load_model(self) -> Any:
         if os.path.exists(self.model_path):
             try:
                 model = joblib.load(self.model_path)
                 return model
-            except Exception:
+            except Exception as e:
+                logging.error("Error loading model: " + str(e))
                 return None
         else:
+            logging.error("Model file not found at: " + self.model_path)
             return None
 
     def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
@@ -139,7 +147,7 @@ class EyeGlucoseMonitor:
         faces = self.face_cascade.detectMultiScale(
             enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60)
         )
-        # Try with a blurred image if no faces found under dark conditions.
+        # Try a blurred image if no faces are found under dark conditions.
         if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
             faces = self.face_cascade.detectMultiScale(
@@ -147,10 +155,10 @@ class EyeGlucoseMonitor:
             )
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
         if len(faces) > 0:
-            # Choose the largest face
+            # Choose the largest face.
             face = max(faces, key=lambda r: r[2] * r[3])
             x, y, w, h = face
-            detection.face_rect = face  # Save the face bounding box
+            detection.face_rect = face  # Save the face bounding box.
             face_roi = enhanced[y:y+h, x:x+w]
             left_eyes = self.eye_cascades["left"].detectMultiScale(
                 face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
@@ -158,7 +166,6 @@ class EyeGlucoseMonitor:
             right_eyes = self.eye_cascades["right"].detectMultiScale(
                 face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15)
             )
-            # Decide if eyes are detected.
             if ir_intensity < self.MIN_IR_INTENSITY:
                 detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
             else:
@@ -174,43 +181,42 @@ class EyeGlucoseMonitor:
 
     def extract_features(self, frame: np.ndarray) -> Dict:
         """
-        Extract features only from the eye region.
-        If no eyes are detected, returns an empty dictionary.
+        Extract features from the eye region.
+        Returns an empty dict if no eyes are detected.
         """
         detection = self.detect_face_and_eyes(frame)
-        # Check for valid detection with at least one eye detected.
         if not detection.is_valid or (len(detection.left_eye) == 0 and len(detection.right_eye) == 0):
+            logging.warning("No valid eyes detected.")
             return {}
         if detection.face_rect is None:
+            logging.warning("No face rectangle detected.")
             return {}
 
-        # Get the face region (in original frame coordinates)
         fx, fy, fw, fh = detection.face_rect
         face_roi = frame[fy:fy+fh, fx:fx+fw]
 
-        # Convert the detected eye boxes (which are relative to the face ROI) into a union ROI.
+        # Create a union of detected eye boxes (relative to face ROI)
         eye_boxes = []
         for (ex, ey, ew, eh) in detection.left_eye:
             eye_boxes.append((ex, ey, ex+ew, ey+eh))
         for (ex, ey, ew, eh) in detection.right_eye:
             eye_boxes.append((ex, ey, ex+ew, ey+eh))
         if not eye_boxes:
+            logging.warning("No eye boxes found.")
             return {}
         ex_min = min(box[0] for box in eye_boxes)
         ey_min = min(box[1] for box in eye_boxes)
         ex_max = max(box[2] for box in eye_boxes)
         ey_max = max(box[3] for box in eye_boxes)
-        # These coordinates are relative to the face ROI.
-        # Convert them to original frame coordinates.
+        # Convert from face ROI coordinates to full frame coordinates.
         eye_roi_x = fx + ex_min
         eye_roi_y = fy + ey_min
         eye_roi_w = ex_max - ex_min
         eye_roi_h = ey_max - ey_min
 
-        # Ensure the ROI is within frame bounds.
+        # Crop the eye region.
         eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
 
-        # Extract features from the cropped eye region.
         features = {
             "pupil_size": get_pupil_size(eye_roi),
             "sclera_redness": get_sclera_redness(eye_roi),
@@ -225,27 +231,44 @@ class EyeGlucoseMonitor:
             "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
             "birefringence_index": get_birefringence_index(eye_roi)
         }
+        # Enforce the order expected by the model.
         ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
+        # Save the latest features for debugging.
+        self.last_features = ordered_features
         return ordered_features
 
     def predict_glucose(self, features: Dict):
+        """
+        Predict blood glucose from features.
+        Logs a warning if the prediction remains constant for many frames.
+        """
         result = None
         try:
             if self.model is not None and features:
-                df = pd.DataFrame([features])
+                df = pd.DataFrame([features], columns=FEATURES_ORDER)
                 prediction = self.model.predict(df)
                 if len(prediction) > 0:
                     result = prediction[0]
                     if result is None or (isinstance(result, float) and np.isnan(result)):
                         result = None
-        except Exception:
+        except Exception as e:
+            logging.error("Prediction error: " + str(e))
             result = None
 
-        if result is not None:
-            with self.prediction_lock:
-                self.glucose_buffer.append(result)
-                # Running average computed over the buffer.
-                self.latest_prediction = np.mean(self.glucose_buffer)
+        with self.prediction_lock:
+            # Use a tolerance (e.g., 0.1 mg/dL) for comparing predictions.
+            if (result is not None and self.last_prediction is not None and 
+                abs(result - self.last_prediction) < self.prediction_tolerance):
+                self.constant_count += 1
+            else:
+                self.constant_count = 0
+
+            self.latest_prediction = result
+            self.last_prediction = result
+
+            if self.constant_count > 20:
+                logging.warning("Prediction remains constant for over 20 frames. Check feature extraction or model input.")
+                logging.warning(f"Latest extracted features: {self.last_features}")
 
     def run(self):
         cap = cv2.VideoCapture(0)
@@ -258,22 +281,24 @@ class EyeGlucoseMonitor:
             if not ret:
                 break
 
-            current_time = time.time()
             detection = self.detect_face_and_eyes(frame)
-            # Only proceed if a valid face with detected eyes is found.
             if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
-                self.last_valid_detection_time = current_time
-                
-                # NOTE: Adjust update frequency (in seconds) here.
-                # The prediction (and running average update) is performed once every 1 second.
-                if current_time - self.last_prediction_time >= 1.0:
-                    self.last_prediction_time = current_time
-                    features = self.extract_features(frame)
-                    self.predict_glucose(features)
+                features = self.extract_features(frame)
+                self.predict_glucose(features)
+
+                # Draw the detected face rectangle (blue)
+                if detection.face_rect is not None:
+                    (x, y, w, h) = detection.face_rect
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                    # Draw left eye boxes (green)
+                    for (ex, ey, ew, eh) in detection.left_eye:
+                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 255, 0), 2)
+                    # Draw right eye boxes (red)
+                    for (ex, ey, ew, eh) in detection.right_eye:
+                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 0, 255), 2)
             else:
-                if current_time - self.last_valid_detection_time > self.invalid_detection_threshold:
-                    with self.prediction_lock:
-                        self.latest_prediction = None
+                with self.prediction_lock:
+                    self.latest_prediction = None
 
             with self.prediction_lock:
                 text = f"{self.latest_prediction:.1f} mg/dL" if self.latest_prediction is not None else "No Reading"
