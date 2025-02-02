@@ -276,15 +276,21 @@ class EyeGlucoseMonitor:
             print("Could not open webcam.")
             return
 
+        frame_counter = 0  # Initialize frame counter
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
+            frame_counter += 1
+
             detection = self.detect_face_and_eyes(frame)
             if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
-                features = self.extract_features(frame)
-                self.predict_glucose(features)
+                # Update prediction only every 10 frames
+                if frame_counter % 10 == 0:
+                    features = self.extract_features(frame)
+                    self.predict_glucose(features)
 
                 # Draw the detected face rectangle (blue)
                 if detection.face_rect is not None:
