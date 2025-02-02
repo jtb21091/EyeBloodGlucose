@@ -12,6 +12,10 @@ If you want to make a donation feel free to on this site
 
 If you want to contribute somehow; please send an email to me at jtbrooks210@gmail.com
 
-Feel free to use at your leisure.
+Feel free to use at your leisure
+
+I do not hold any liability for utilizing this software or any modifications of this software
+
+This, as written, does not collect data, unless explicitly stated
 
 This is a moonshot program
