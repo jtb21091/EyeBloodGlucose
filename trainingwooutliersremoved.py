@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import joblib
 import matplotlib.pyplot as plt
+import logging
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -13,20 +14,52 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
-import logging
+
+# Additional model imports:
+from sklearn.svm import SVR                   # Support Vector Regressor
+from sklearn.neighbors import KNeighborsRegressor  # KNN Regressor
+from sklearn.tree import DecisionTreeRegressor     # Decision Tree Regressor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
+#########################################
+# Helper functions to compute extra metrics
+#########################################
+
+def compute_mard(y_true, y_pred):
+    """
+    Compute the Mean Absolute Relative Difference (MARD)
+    """
+    epsilon = 1e-8  # small number to avoid division-by-zero
+    return np.mean(np.abs((y_true - y_pred) / (y_true + epsilon))) * 100
+
+
+def compute_sigma_level(y_true, y_pred, TEa=15):
+    """
+    Compute a Sigma Level metric based on:
+    
+        Sigma = (TEa - |bias|) / SD(error)
+    
+    where TEa is the Total Allowable Error.
+    """
+    errors = y_pred - y_true
+    bias = np.mean(errors)
+    sd = np.std(errors)
+    if sd == 0:
+        return float('inf')
+    return (TEa - np.abs(bias)) / sd
+
+
+#########################################
+# Main Model Training Class (without outlier removal)
+#########################################
+
 class EyeGlucoseModel:
     def __init__(self, labels_file="eye_glucose_data/labels.csv", model_file="eye_glucose_model.pkl"):
         """
         Initialize the EyeGlucoseModel training class.
-        
-        Args:
-            labels_file: Path to the CSV file with data.
-            model_file: Path to save the best model.
         """
         self.labels_file = labels_file
         self.model_file = model_file
@@ -35,9 +68,7 @@ class EyeGlucoseModel:
     def prepare_data(self):
         """
         Load and prepare data for training.
-        
-        Returns:
-            A tuple (X, y) where X contains the features and y the target variable.
+        Note: This version does NOT remove outliers.
         """
         if not os.path.exists(self.labels_file):
             raise FileNotFoundError(f"Data file not found: {self.labels_file}")
@@ -52,10 +83,9 @@ class EyeGlucoseModel:
         if 'timestamp' in df.columns:
             df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour
         
-        # Split features and target
         y = df["blood_glucose"].astype(float)
         
-        # Define the reduced features explicitly (pupil_circularity removed)
+        # Define the reduced features
         reduced_features = [
             'pupil_size', 
             'sclera_redness', 
@@ -82,10 +112,7 @@ class EyeGlucoseModel:
 
     def get_model_configurations(self):
         """
-        Define models and their hyperparameter search spaces.
-        
-        Returns:
-            A dictionary with model configurations.
+        Define models and hyperparameter search spaces.
         """
         models = {
             "ElasticNet": {
@@ -121,6 +148,42 @@ class EyeGlucoseModel:
                     "alpha": uniform(0.0001, 0.01),
                     "learning_rate_init": uniform(0.0001, 0.01)
                 }
+            },
+            # Additional models:
+            "SVR": {
+                "model": SVR(),
+                "params": {
+                    "C": uniform(0.1, 10.0),
+                    "epsilon": uniform(0.01, 0.5),
+                    "kernel": ["linear", "rbf"]
+                }
+            },
+            "KNN Regressor": {
+                "model": KNeighborsRegressor(),
+                "params": {
+                    "n_neighbors": randint(3, 20),
+                    "weights": ["uniform", "distance"]
+                }
+            },
+            "Decision Tree": {
+                "model": DecisionTreeRegressor(),
+                "params": {
+                    "max_depth": randint(3, 15),
+                    "min_samples_split": randint(2, 10),
+                    "min_samples_leaf": randint(1, 5)
+                }
+            },
+            "Stacking Regressor": {
+                "model": StackingRegressor(
+                    estimators=[
+                        ('rf', RandomForestRegressor()),
+                        ('gb', GradientBoostingRegressor())
+                    ],
+                    final_estimator=LinearRegression()
+                ),
+                "params": {
+                    # Optionally tune final estimator parameters if desired
+                }
             }
         }
         return models
@@ -128,12 +191,6 @@ class EyeGlucoseModel:
     def plot_learning_curve(self, estimator, X_train, y_train, model_name):
         """
         Plot the learning curve (training and validation loss) for the given estimator.
-        
-        Args:
-            estimator: The estimator to evaluate.
-            X_train: Training features.
-            y_train: Training target.
-            model_name: Name of the model (for plot title).
         """
         train_sizes, train_scores, val_scores = learning_curve(
             estimator,
@@ -157,22 +214,34 @@ class EyeGlucoseModel:
         plt.grid(True)
         plt.show()
 
+    def save_metrics_to_file(self, best_model_name, metrics, cgm_benchmarks, filename="best_model_metrics.csv"):
+        """
+        Save the best model's metrics and CGM benchmark comparisons to a CSV file.
+        """
+        rows = [
+            {"Metric": "R²", "Best Model Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks["R²"]},
+            {"Metric": "MSE", "Best Model Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks["MSE"]},
+            {"Metric": "MAE", "Best Model Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks["MAE"]},
+            {"Metric": "MARD", "Best Model Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks["MARD"]},
+            {"Metric": "Sigma Level", "Best Model Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks["Sigma Level"]}
+        ]
+        df_metrics = pd.DataFrame(rows)
+        with open(filename, 'w') as f:
+            f.write(f"Best Model: {best_model_name}\n")
+        df_metrics.to_csv(filename, mode='a', index=False)
+        logging.info(f"Best model metrics saved to: {filename}")
+
     def train_model(self):
         """
-        Train and evaluate models using cross-validation and hyperparameter tuning.
-        For each model, displays:
-          - Scatter plot of actual vs. predicted values.
-          - Learning curve (training and validation loss).
-        
-        After evaluating all models, the best one is saved.
+        Train and evaluate each model via hyperparameter tuning.
+        In addition to R²/MSE/MAE, this version computes MARD and Sigma Level.
+        For the Neural Network model, an epoch-by-epoch training loop is used to track these metrics.
         """
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Set whether to include polynomial features (set to False if you prefer not to)
+        # Build the preprocessing pipeline (optionally including polynomial features)
         use_poly_features = False
-
-        # Build the preprocessing pipeline
         if use_poly_features:
             preprocessor = Pipeline([
                 ('imputer', SimpleImputer(strategy='median')),
@@ -188,9 +257,9 @@ class EyeGlucoseModel:
         best_score = float('-inf')
         best_model_name = None
         best_estimator = None
+        best_metrics = {}
 
         models = self.get_model_configurations()
-        # Increase the number of iterations for a more thorough search.
         n_iter_search = 50
 
         for name, config in models.items():
@@ -213,11 +282,18 @@ class EyeGlucoseModel:
             r2 = r2_score(y_val, y_pred)
             mse = mean_squared_error(y_val, y_pred)
             mae = mean_absolute_error(y_val, y_pred)
+            mard_value = compute_mard(y_val.values, y_pred)
+            sigma_value = compute_sigma_level(y_val.values, y_pred, TEa=15)
+            
             logging.info(f"Best parameters for {name}: {search.best_params_}")
             logging.info(f"Metrics for {name}:")
             logging.info(f"  R² Score: {r2:.5f}")
             logging.info(f"  MSE: {mse:.5f}")
             logging.info(f"  MAE: {mae:.5f}")
+            logging.info(f"  MARD: {mard_value:.5f}%")
+            logging.info(f"  Sigma Level: {sigma_value:.5f}")
+
+            # Plot Actual vs. Predicted values
             plt.figure(figsize=(10, 6))
             plt.scatter(y_val, y_pred, alpha=0.5)
             plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'r--', lw=2)
@@ -225,15 +301,76 @@ class EyeGlucoseModel:
             plt.ylabel("Predicted Values")
             plt.title(f"{name}: Actual vs. Predicted Values")
             plt.show()
+
+            # Plot the learning curve
             self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
+
+            # For the Neural Network, additionally run a custom epoch-by-epoch loop.
+            if name == "Neural Network":
+                logging.info("Starting custom epoch loop for Neural Network to track MARD & Sigma Level...")
+                # Extract best hyperparameters from the search
+                nn_params = {key.split("regressor__")[1]: value for key, value in search.best_params_.items()}
+                nn_model = MLPRegressor(max_iter=1, warm_start=True, early_stopping=False, random_state=42, **nn_params)
+                nn_pipeline = Pipeline([
+                    ('preprocessor', preprocessor),
+                    ('regressor', nn_model)
+                ])
+                n_epochs = 50
+                mard_epochs = []
+                sigma_epochs = []
+                for epoch in range(n_epochs):
+                    nn_pipeline.fit(X_train, y_train)
+                    y_pred_epoch = nn_pipeline.predict(X_val)
+                    mard_epoch = compute_mard(y_val.values, y_pred_epoch)
+                    sigma_epoch = compute_sigma_level(y_val.values, y_pred_epoch, TEa=15)
+                    mard_epochs.append(mard_epoch)
+                    sigma_epochs.append(sigma_epoch)
+                    logging.info(f"Epoch {epoch+1}/{n_epochs} - MARD: {mard_epoch:.5f}% - Sigma Level: {sigma_epoch:.5f}")
+                
+                plt.figure(figsize=(10, 6))
+                plt.plot(range(1, n_epochs+1), mard_epochs, marker='o', label="MARD")
+                plt.xlabel("Epoch")
+                plt.ylabel("MARD (%)")
+                plt.title("MARD over Epochs (Neural Network)")
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+
+                plt.figure(figsize=(10, 6))
+                plt.plot(range(1, n_epochs+1), sigma_epochs, marker='o', label="Sigma Level", color='orange')
+                plt.xlabel("Epoch")
+                plt.ylabel("Sigma Level")
+                plt.title("Sigma Level over Epochs (Neural Network)")
+                plt.legend()
+                plt.grid(True)
+                plt.show()
+            
+            # Update the best model if this one has a higher R² score.
             if r2 > best_score:
                 best_score = r2
                 best_estimator = search.best_estimator_
                 best_model_name = name
-
+                best_metrics = {
+                    "R2": r2,
+                    "MSE": mse,
+                    "MAE": mae,
+                    "MARD": mard_value,
+                    "Sigma": sigma_value
+                }
+        
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.best_model = best_estimator
         self.save_model()
+
+        # Define example CGM benchmark values (adjust as needed)
+        cgm_benchmarks = {
+            "R²": 0.94,
+            "MSE": 6.2,
+            "MAE": 2.1,
+            "MARD": 10.5,
+            "Sigma Level": 3.0
+        }
+        self.save_metrics_to_file(best_model_name, best_metrics, cgm_benchmarks, filename="best_model_metrics.csv")
 
     def save_model(self):
         """
