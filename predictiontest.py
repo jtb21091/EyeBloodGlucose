@@ -32,7 +32,7 @@ FEATURES_ORDER = [
 ]
 
 # ---------------------------------------------------------------------------
-# Updated Feature Extraction Functions using example “real” algorithms.
+# Feature Extraction Functions using example “real” algorithms.
 # (Adjust thresholds/parameters to match your training-time setup.)
 # ---------------------------------------------------------------------------
 
@@ -93,13 +93,6 @@ def get_vein_prominence(image):
         logging.error("Error in get_vein_prominence: " + str(e))
         return 0.0
 
-def get_pupil_response_time(image):
-    """
-    Placeholder for a temporal measurement.
-    A real implementation would compare the pupil size across consecutive frames.
-    """
-    return 0.0
-
 def get_ir_intensity(image):
     """
     Calculate the IR intensity as the mean of the grayscale values.
@@ -146,13 +139,6 @@ def get_tear_film_reflectivity(image):
     except Exception as e:
         logging.error("Error in get_tear_film_reflectivity: " + str(e))
         return 0.0
-
-def get_pupil_dilation_rate(image):
-    """
-    Placeholder for pupil dilation rate.
-    A real implementation would compare pupil size across frames.
-    """
-    return 0.0
 
 def get_sclera_color_balance(image):
     """
@@ -240,6 +226,11 @@ class EyeGlucoseMonitor:
         self.time_history = deque(maxlen=200)
         self.instantaneous_history = deque(maxlen=200)
         self.smoothed_history = deque(maxlen=200)
+        
+        # ---------------------------
+        # Temporal Measurements: Maintain a history of recent pupil sizes.
+        # ---------------------------
+        self.pupil_history = deque(maxlen=30)  # Stores tuples of (timestamp, pupil_size)
 
     def _load_model(self) -> Any:
         if os.path.exists(self.model_path):
@@ -290,6 +281,38 @@ class EyeGlucoseMonitor:
                     detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
         return detection
 
+    def update_pupil_history(self, pupil_size: float):
+        """
+        Update the temporal buffer with the current pupil size and timestamp.
+        """
+        current_time = time.time()
+        self.pupil_history.append((current_time, pupil_size))
+
+    def compute_pupil_dilation_rate(self) -> float:
+        """
+        Compute the rate of change of pupil size (per second) using the two most recent measurements.
+        """
+        if len(self.pupil_history) < 2:
+            return 0.0
+        t0, p0 = self.pupil_history[-2]
+        t1, p1 = self.pupil_history[-1]
+        dt = t1 - t0
+        if dt == 0:
+            return 0.0
+        rate = (p1 - p0) / dt
+        return round(rate, 5)
+
+    def compute_pupil_response_time(self) -> float:
+        """
+        Provide a crude estimate of the pupil response time based on the dilation rate.
+        Here, the response time is defined as the inverse of the absolute dilation rate.
+        """
+        rate = self.compute_pupil_dilation_rate()
+        if rate == 0:
+            return 0.0
+        response_time = 1.0 / abs(rate)
+        return round(response_time, 5)
+
     def extract_features(self, frame: np.ndarray) -> Dict:
         """
         Extract features from the eye region.
@@ -328,16 +351,24 @@ class EyeGlucoseMonitor:
         # Crop the eye region.
         eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
 
+        # --- Temporal Measurements ---
+        # Compute the current pupil size and update the history.
+        pupil_size = get_pupil_size(eye_roi)
+        self.update_pupil_history(pupil_size)
+        # Compute temporal features using the history.
+        pupil_dilation_rate = self.compute_pupil_dilation_rate()
+        pupil_response_time = self.compute_pupil_response_time()
+
         features = {
-            "pupil_size": get_pupil_size(eye_roi),
+            "pupil_size": pupil_size,
             "sclera_redness": get_sclera_redness(eye_roi),
             "vein_prominence": get_vein_prominence(eye_roi),
-            "pupil_response_time": get_pupil_response_time(eye_roi),
+            "pupil_response_time": pupil_response_time,
             "ir_intensity": get_ir_intensity(eye_roi),
             "scleral_vein_density": get_scleral_vein_density(eye_roi),
             "ir_temperature": get_ir_temperature(eye_roi),
             "tear_film_reflectivity": get_tear_film_reflectivity(eye_roi),
-            "pupil_dilation_rate": get_pupil_dilation_rate(eye_roi),
+            "pupil_dilation_rate": pupil_dilation_rate,
             "sclera_color_balance": get_sclera_color_balance(eye_roi),
             "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
             "birefringence_index": get_birefringence_index(eye_roi)

@@ -31,53 +31,72 @@ FEATURES_ORDER = [
     'birefringence_index'
 ]
 
-def get_birefringence_index(image):
+# ---------------------------------------------------------------------------
+# Feature Extraction Functions using example “real” algorithms.
+# (Adjust thresholds/parameters to match your training-time setup.)
+# ---------------------------------------------------------------------------
+
+def get_pupil_size(image):
+    """
+    Use HoughCircles to detect circular features (assumed pupils)
+    and return the average radius.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Normalized variance as an index; consider other texture measures for more robustness.
-        return round(np.var(gray) / 255.0, 5)
+        circles = cv2.HoughCircles(
+            gray,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=50,
+            param1=50,
+            param2=30,
+            minRadius=10,
+            maxRadius=80
+        )
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")
+            # Return the average radius as the pupil size.
+            return round(np.mean([r for (_, _, r) in circles]), 5)
+        else:
+            return 0.0
     except Exception as e:
-        logging.error("Error in get_birefringence_index: " + str(e))
-        return 0.0  # Fallback value
-
-# ---------------------------
-# Feature Extraction Functions
-# (These functions are currently dummy implementations.
-#  Replace them with your real algorithms to compute the features as used during training.)
-# ---------------------------
-def get_pupil_size(image):
-    # TODO: Replace with a real pupil detection algorithm (e.g., using HoughCircles).
-    return np.random.uniform(20, 100)
+        logging.error("Error in get_pupil_size: " + str(e))
+        return 0.0
 
 def get_sclera_redness(image):
-    # TODO: Replace with an algorithm (e.g., using HSV/LAB color space) to measure redness.
-    return np.random.uniform(0, 100)
+    """
+    Convert the image to HSV and threshold the hue for red.
+    The percentage of red pixels is returned as the redness index.
+    """
+    try:
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        # Define a mask for red hues (adjust lower/upper bounds as needed)
+        mask = cv2.inRange(hsv, (0, 70, 50), (10, 255, 255))
+        redness = cv2.countNonZero(mask) / (image.shape[0] * image.shape[1]) * 100
+        return round(redness, 5)
+    except Exception as e:
+        logging.error("Error in get_sclera_redness: " + str(e))
+        return 0.0
 
 def get_vein_prominence(image):
-    # TODO: Use a more robust method (e.g., edge detection) to capture vein prominence.
-    return np.random.uniform(0, 10)
-
-def get_ir_temperature(image):
-    try:
-        # Example: Compute IR temperature from the mean of the red channel.
-        return round(np.mean(image[:, :, 2]), 5)
-    except Exception as e:
-        logging.error("Error in get_ir_temperature: " + str(e))
-        return 0.0
-
-def get_tear_film_reflectivity(image):
+    """
+    Use Canny edge detection to approximate vein prominence.
+    A simple metric is calculated based on the normalized density of edges.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return round(np.std(gray), 5)
+        edges = cv2.Canny(gray, 50, 150)
+        prominence = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
+        # Multiply by a scaling factor if needed.
+        return round(prominence * 10, 5)
     except Exception as e:
-        logging.error("Error in get_tear_film_reflectivity: " + str(e))
+        logging.error("Error in get_vein_prominence: " + str(e))
         return 0.0
 
-def get_pupil_dilation_rate():
-    # TODO: Implement a method that compares pupil sizes across frames to compute the dilation rate.
-    return np.random.uniform(0.1, 1.0)
-
 def get_ir_intensity(image):
+    """
+    Calculate the IR intensity as the mean of the grayscale values.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return round(np.mean(gray), 5)
@@ -86,15 +105,45 @@ def get_ir_intensity(image):
         return 0.0
 
 def get_scleral_vein_density(image):
+    """
+    Use Canny edge detection to compute the density of edges
+    as a proxy for the density of scleral veins.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150)
-        return round(np.sum(edges) / (image.shape[0] * image.shape[1]), 5)
+        density = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
+        return round(density, 5)
     except Exception as e:
         logging.error("Error in get_scleral_vein_density: " + str(e))
         return 0.0
 
+def get_ir_temperature(image):
+    """
+    Compute IR temperature using the mean of the red channel.
+    (Adjust this method to your calibration.)
+    """
+    try:
+        return round(np.mean(image[:, :, 2]), 5)
+    except Exception as e:
+        logging.error("Error in get_ir_temperature: " + str(e))
+        return 0.0
+
+def get_tear_film_reflectivity(image):
+    """
+    Use the standard deviation of the grayscale image as a measure of tear film reflectivity.
+    """
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return round(np.std(gray), 5)
+    except Exception as e:
+        logging.error("Error in get_tear_film_reflectivity: " + str(e))
+        return 0.0
+
 def get_sclera_color_balance(image):
+    """
+    Compute the ratio of the mean red channel to the mean green channel.
+    """
     try:
         r_mean = np.mean(image[:, :, 2])
         g_mean = np.mean(image[:, :, 1])
@@ -104,12 +153,26 @@ def get_sclera_color_balance(image):
         return 1.0
 
 def get_vein_pulsation_intensity(image):
+    """
+    Estimate vein pulsation intensity using the mean of the Laplacian operator.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Example: Using the mean of the Laplacian to estimate pulsation intensity.
-        return round(np.mean(cv2.Laplacian(gray, cv2.CV_64F)), 5)
+        pulsation = np.mean(cv2.Laplacian(gray, cv2.CV_64F))
+        return round(pulsation, 5)
     except Exception as e:
         logging.error("Error in get_vein_pulsation_intensity: " + str(e))
+        return 0.0
+
+def get_birefringence_index(image):
+    """
+    Compute a birefringence index based on the normalized variance of the grayscale image.
+    """
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return round(np.var(gray) / 255.0, 5)
+    except Exception as e:
+        logging.error("Error in get_birefringence_index: " + str(e))
         return 0.0
 
 # ---------------------------
@@ -163,6 +226,11 @@ class EyeGlucoseMonitor:
         self.time_history = deque(maxlen=200)
         self.instantaneous_history = deque(maxlen=200)
         self.smoothed_history = deque(maxlen=200)
+        
+        # ---------------------------
+        # Temporal Measurements: Maintain a history of recent pupil sizes.
+        # ---------------------------
+        self.pupil_history = deque(maxlen=30)  # Stores tuples of (timestamp, pupil_size)
 
     def _load_model(self) -> Any:
         if os.path.exists(self.model_path):
@@ -177,7 +245,10 @@ class EyeGlucoseMonitor:
             return None
 
     def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
-        # Using Haar cascades; for improved accuracy consider a DNN-based face detector.
+        """
+        Detect the face and eyes using Haar cascades.
+        Returns an EyeDetection dataclass instance.
+        """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
@@ -209,6 +280,38 @@ class EyeGlucoseMonitor:
                     eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
                     detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
         return detection
+
+    def update_pupil_history(self, pupil_size: float):
+        """
+        Update the temporal buffer with the current pupil size and timestamp.
+        """
+        current_time = time.time()
+        self.pupil_history.append((current_time, pupil_size))
+
+    def compute_pupil_dilation_rate(self) -> float:
+        """
+        Compute the rate of change of pupil size (per second) using the two most recent measurements.
+        """
+        if len(self.pupil_history) < 2:
+            return 0.0
+        t0, p0 = self.pupil_history[-2]
+        t1, p1 = self.pupil_history[-1]
+        dt = t1 - t0
+        if dt == 0:
+            return 0.0
+        rate = (p1 - p0) / dt
+        return round(rate, 5)
+
+    def compute_pupil_response_time(self) -> float:
+        """
+        Provide a crude estimate of the pupil response time based on the dilation rate.
+        Here, the response time is defined as the inverse of the absolute dilation rate.
+        """
+        rate = self.compute_pupil_dilation_rate()
+        if rate == 0:
+            return 0.0
+        response_time = 1.0 / abs(rate)
+        return round(response_time, 5)
 
     def extract_features(self, frame: np.ndarray) -> Dict:
         """
@@ -248,18 +351,24 @@ class EyeGlucoseMonitor:
         # Crop the eye region.
         eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
 
+        # --- Temporal Measurements ---
+        # Compute the current pupil size and update the history.
+        pupil_size = get_pupil_size(eye_roi)
+        self.update_pupil_history(pupil_size)
+        # Compute temporal features using the history.
+        pupil_dilation_rate = self.compute_pupil_dilation_rate()
+        pupil_response_time = self.compute_pupil_response_time()
+
         features = {
-            "pupil_size": get_pupil_size(eye_roi),
+            "pupil_size": pupil_size,
             "sclera_redness": get_sclera_redness(eye_roi),
             "vein_prominence": get_vein_prominence(eye_roi),
-            # Using the same dummy function for both pupil_response_time and pupil_dilation_rate;
-            # replace one of these with a temporal measurement if available.
-            "pupil_response_time": get_pupil_dilation_rate(),
+            "pupil_response_time": pupil_response_time,
             "ir_intensity": get_ir_intensity(eye_roi),
             "scleral_vein_density": get_scleral_vein_density(eye_roi),
             "ir_temperature": get_ir_temperature(eye_roi),
             "tear_film_reflectivity": get_tear_film_reflectivity(eye_roi),
-            "pupil_dilation_rate": get_pupil_dilation_rate(),
+            "pupil_dilation_rate": pupil_dilation_rate,
             "sclera_color_balance": get_sclera_color_balance(eye_roi),
             "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
             "birefringence_index": get_birefringence_index(eye_roi)
