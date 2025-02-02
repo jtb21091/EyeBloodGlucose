@@ -115,6 +115,8 @@ class EyeGlucoseModel:
         """
         Return a dictionary of models and hyperparameter search spaces.
         The dictionary now includes:
+          - Linear Regression (standard ordinary least squares on raw features)
+          - Multiple Regression (applies a second-order polynomial transformation before fitting a linear model)
           - ElasticNet, SVR, tree-based models, and Neural Networks
           - GLMs: Gamma, Poisson, and Inverse Gaussian Regression
           - Bayesian and Quantile Regression
@@ -122,6 +124,18 @@ class EyeGlucoseModel:
           - Kernel Regression via Gaussian Process Regression (with uncertainty estimates)
         """
         models = {
+            "Linear Regression": {
+                "model": LinearRegression(),
+                "params": {
+                    "fit_intercept": [True, False]
+                }
+            },
+            "Multiple Regression": {
+                "model": LinearRegression(),
+                "params": {
+                    "fit_intercept": [True, False]
+                }
+            },
             "ElasticNet": {
                 "model": ElasticNet(),
                 "params": {
@@ -285,22 +299,15 @@ class EyeGlucoseModel:
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # --- Preprocessing Pipeline ---
-        use_poly_features = False
+        # --- Default Preprocessing Pipeline ---
+        use_poly_features = False  # Global flag (used by all models except those with custom pipelines)
         use_robust_scaler = False  # Change to True if needed.
         scaler = RobustScaler() if use_robust_scaler else StandardScaler()
 
-        if use_poly_features:
-            preprocessor = Pipeline([
-                ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', scaler),
-                ('poly', PolynomialFeatures(degree=2, include_bias=False))
-            ])
-        else:
-            preprocessor = Pipeline([
-                ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', scaler)
-            ])
+        preprocessor = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', scaler)
+        ])
 
         best_score = float('-inf')
         best_model_name = None
@@ -316,8 +323,18 @@ class EyeGlucoseModel:
 
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
+            # For "Multiple Regression", we override the preprocessor to include polynomial features.
+            if name == "Multiple Regression":
+                current_preprocessor = Pipeline([
+                    ('imputer', SimpleImputer(strategy='median')),
+                    ('scaler', scaler),
+                    ('poly', PolynomialFeatures(degree=2, include_bias=False))
+                ])
+            else:
+                current_preprocessor = preprocessor
+
             pipeline = Pipeline([
-                ('preprocessor', preprocessor),
+                ('preprocessor', current_preprocessor),
                 ('regressor', config['model'])
             ])
             search = RandomizedSearchCV(
