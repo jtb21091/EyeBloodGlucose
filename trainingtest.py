@@ -1,4 +1,3 @@
-# use this as a test environment
 import os
 import pandas as pd
 import numpy as np
@@ -113,6 +112,12 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
+        In this trimmed version we keep:
+          - SVR
+          - Random Forest
+          - Gradient Boosting
+          - Neural Network (MLPRegressor)
+          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
         """
         models = {
             "SVR": {
@@ -138,6 +143,7 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
+                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
                     "subsample": uniform(0.6, 0.4)
                 }
             },
@@ -208,49 +214,43 @@ class EyeGlucoseModel:
         plt.grid(True)
         plt.show()
 
-    def plot_weighted_histogram(self, data, num_bins=10):
+    def save_metrics_to_csv(self, best_model_name, metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv"):
         """
-        Plot a weighted histogram using Option 3.
-        Each data point is weighted by the inverse of its bin's count so that each bin contributes equally.
-        """
-        data = np.array(data)
-        # Compute the bin edges using the desired number of bins
-        bin_edges = np.histogram_bin_edges(data, bins=num_bins)
-        # Count the number of points in each bin
-        counts, _ = np.histogram(data, bins=bin_edges)
-        # Determine which bin each data point falls into (np.digitize returns 1-indexed bins)
-        bin_indices = np.digitize(data, bins=bin_edges, right=True)
-        # Assign weights so that each data point in a bin has weight = 1 / (number of points in that bin)
-        weights = np.array([1.0 / counts[i - 1] if i > 0 and counts[i - 1] > 0 else 0 for i in bin_indices])
+        Saves the best model details and performance metrics to a CSV file.
         
-        plt.figure(figsize=(10, 6))
-        plt.hist(data, bins=bin_edges, weights=weights, edgecolor='black')
-        plt.xlabel("Blood Glucose")
-        plt.ylabel("Normalized Frequency")
-        plt.title("Weighted Histogram with Balanced Bin Contribution")
-        plt.show()
-
-    def save_metrics_to_file(self, best_model_name, metrics, cgm_benchmarks, filename="best_model_metrics.csv"):
+        Parameters:
+            best_model_name (str): Name of the best model.
+            metrics (dict): A dictionary containing performance metrics (e.g., R2, MSE, MAE, MARD, Sigma).
+            cgm_benchmarks (dict): A dictionary containing benchmark values for each metric.
+            best_model_details (str): String representation of the best model.
+            best_model_params (dict): Best hyperparameters of the best model.
+            filename (str): The name of the CSV file to save.
+        """
+        # Create a list of dictionaries (rows) to store the details
         rows = [
-            {"Metric": "R²", "Best Model Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks["R²"]},
-            {"Metric": "MSE", "Best Model Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks["MSE"]},
-            {"Metric": "MAE", "Best Model Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks["MAE"]},
-            {"Metric": "MARD", "Best Model Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks["MARD"]},
-            {"Metric": "Sigma Level", "Best Model Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks["Sigma Level"]}
+            {"Metric": "Best Model Name", "Value": best_model_name, "CGM Benchmark": ""},
+            {"Metric": "Best Model Details", "Value": best_model_details, "CGM Benchmark": ""}
         ]
-        df_metrics = pd.DataFrame(rows)
-        with open(filename, 'w') as f:
-            f.write(f"Best Model: {best_model_name}\n")
-        df_metrics.to_csv(filename, mode='a', index=False)
-        logging.info(f"Best model metrics saved to: {filename}")
+        
+        # Add hyperparameters as rows
+        rows.append({"Metric": "Best Model Hyperparameters", "Value": "", "CGM Benchmark": ""})
+        for param, value in best_model_params.items():
+            rows.append({"Metric": f"  {param}", "Value": value, "CGM Benchmark": ""})
+        
+        # Add performance metrics and their corresponding CGM benchmarks
+        rows.append({"Metric": "R²", "Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks.get("R²", "")})
+        rows.append({"Metric": "MSE", "Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks.get("MSE", "")})
+        rows.append({"Metric": "MAE", "Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks.get("MAE", "")})
+        rows.append({"Metric": "MARD", "Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks.get("MARD", "")})
+        rows.append({"Metric": "Sigma Level", "Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks.get("Sigma Level", "")})
+        
+        # Convert the rows into a DataFrame and save as CSV
+        df = pd.DataFrame(rows)
+        df.to_csv(filename, index=False)
+        logging.info(f"Best model metrics and details saved to: {filename}")
 
     def train_model(self):
-        # Prepare the data
         X, y = self.prepare_data()
-        
-        # Plot the weighted histogram for blood_glucose using Option 3
-        self.plot_weighted_histogram(y, num_bins=10)
-
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
         # --- Default Preprocessing Pipeline ---
@@ -271,6 +271,7 @@ class EyeGlucoseModel:
         best_mae = None
         best_mard = None
         best_sigma = None
+        best_model_params = None  # To store best hyperparameters
 
         models = self.get_model_configurations()
         n_iter_search = 100
@@ -327,6 +328,7 @@ class EyeGlucoseModel:
                 best_mae = mae
                 best_mard = mard_value
                 best_sigma = sigma_value
+                best_model_params = search.best_params_
 
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.best_model = best_estimator
@@ -347,7 +349,8 @@ class EyeGlucoseModel:
             "MARD": best_mard,
             "Sigma": best_sigma
         }
-        self.save_metrics_to_file(best_model_name, best_metrics, cgm_benchmarks, filename="best_model_metrics.csv")
+        best_model_details = str(best_estimator)
+        self.save_metrics_to_csv(best_model_name, best_metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv")
 
     def save_model(self):
         if self.best_model is None:
