@@ -265,8 +265,8 @@ class EyeGlucoseMonitor:
             self.latest_prediction = averaged_result
             self.last_prediction = averaged_result
 
-            if self.constant_count > 20:
-                logging.warning("Rolling average prediction remains constant for over 20 frames. Check feature extraction or model input.")
+            if self.constant_count > 1000:
+                logging.warning("Rolling average prediction remains constant for over 100 frames. Check feature extraction or model input.")
                 logging.warning(f"Latest extracted features: {self.last_features}")
 
     def run(self):

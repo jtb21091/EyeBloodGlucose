@@ -16,6 +16,10 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatur
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
 
+# Import for Gaussian Process Regression (Kernel Regression)
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+
 # Try to import additional ensemble models if installed.
 try:
     from xgboost import XGBRegressor
@@ -66,10 +70,10 @@ class EyeGlucoseModel:
         if "blood_glucose" in numeric_cols:
             numeric_cols.remove("blood_glucose")
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 3).any(axis=1)
+        outliers_z = (z_scores > 6).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
         removed_count = len(df) - len(df_clean)
-        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 3) in at least one non-blood_glucose variable")
+        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
         return df_clean
 
     def prepare_data(self):
@@ -111,19 +115,17 @@ class EyeGlucoseModel:
         """
         Return a dictionary of models and hyperparameter search spaces.
         The dictionary now includes:
-          - ElasticNet and SVR (previous models)
-          - Tree-based models: Random Forest, Gradient Boosting,
-            plus XGBoost, LightGBM, CatBoost (if installed)
-          - Neural Network (MLPRegressor)
-          - GLMs: Gamma Regression, Poisson Regression, Inverse Gaussian Regression (via TweedieRegressor)
-          - Bayesian Regression (BayesianRidge)
-          - Quantile Regression (QuantileRegressor)
+          - ElasticNet, SVR, tree-based models, and Neural Networks
+          - GLMs: Gamma, Poisson, and Inverse Gaussian Regression
+          - Bayesian and Quantile Regression
+          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed
+          - Kernel Regression via Gaussian Process Regression (with uncertainty estimates)
         """
         models = {
             "ElasticNet": {
                 "model": ElasticNet(),
                 "params": {
-                    "alpha": uniform(0.0001, 0.1),  # smaller range to avoid over-regularization
+                    "alpha": uniform(0.0001, 0.1),
                     "l1_ratio": uniform(0, 1)
                 }
             },
@@ -194,6 +196,17 @@ class EyeGlucoseModel:
                 "params": {
                     "alpha": uniform(0.0001, 1.0),
                     "quantile": [0.25, 0.5, 0.75]
+                }
+            },
+            # --- Kernel Regression: Gaussian Process Regression ---
+            "Gaussian Process Regression": {
+                "model": GaussianProcessRegressor(
+                    kernel=C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)),
+                    n_restarts_optimizer=5,
+                    random_state=42
+                ),
+                "params": {
+                    "alpha": uniform(1e-10, 1e-3)  # Noise level (nugget)
                 }
             }
         }
