@@ -1,6 +1,6 @@
 ## EyeBloodGlucose
 Moonshot to measure blood glucose from your eyes
-
+https://github.com/jtb21091/Cherry/tree/main
 Best Model: Random Forest with R² Score: 0.55870
 2025-02-01 17:47:13,947 - INFO - Best model saved as: eye_glucose_model.pkl
 
@@ -29,4 +29,6 @@ Below are the metrics for the best model compared to CGM benchmarks:
 ![Image](pngfiles/1.png)
 
 ![Image](pngfiles/2.png)
+
+![Image](pngfiles/3.png)
 
