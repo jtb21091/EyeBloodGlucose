@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split, RandomizedSearchCV, learni
 from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures
@@ -17,6 +18,7 @@ from scipy.stats import uniform, randint
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 #########################################
 # Helper functions to compute extra metrics
@@ -93,9 +95,13 @@ class EyeGlucoseModel:
 
     def get_model_configurations(self):
         """
-        We restrict the search to models that produce more continuously responsive outputs.
-        Tree-based models are removed. We tune ElasticNet (which worked before),
-        SVR, and a Neural Network.
+        Return a dictionary of models and hyperparameter search spaces.
+        This configuration now includes:
+          - ElasticNet
+          - SVR
+          - Random Forest Regressor
+          - Gradient Boosting Regressor
+          - Neural Network (MLPRegressor)
         """
         models = {
             "ElasticNet": {
@@ -111,6 +117,24 @@ class EyeGlucoseModel:
                     "C": uniform(0.1, 10.0),
                     "epsilon": uniform(0.01, 1.0),
                     "kernel": ["linear", "rbf"]
+                }
+            },
+            "Random Forest": {
+                "model": RandomForestRegressor(),
+                "params": {
+                    "n_estimators": randint(100, 500),
+                    "max_depth": randint(5, 50),
+                    "min_samples_split": randint(2, 10),
+                    "min_samples_leaf": randint(1, 4)
+                }
+            },
+            "Gradient Boosting": {
+                "model": GradientBoostingRegressor(),
+                "params": {
+                    "n_estimators": randint(100, 500),
+                    "learning_rate": uniform(0.01, 0.3),
+                    "max_depth": randint(3, 15),
+                    "subsample": uniform(0.6, 1.0)
                 }
             },
             "Neural Network": {
