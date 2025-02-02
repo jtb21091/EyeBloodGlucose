@@ -1,5 +1,7 @@
 Created by Joshua Thomas Brooks jtbrooks210@gmail.com
 
+Any use or modification of this code must list this LICENSE file
+
 Any commercialization of this software is subject to 51% of revenue going to the createor; Joshua Thomas Brooks jtbrooks210@gmail.com
 
 Any patent of this software or earily similar software is subject to 51% of patent rights going to the createor; Joshua Thomas Brooks jtbrooks210@gmail.com
