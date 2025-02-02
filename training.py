@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import logging
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import ElasticNet, LinearRegression, GammaRegressor, PoissonRegressor, TweedieRegressor, BayesianRidge, QuantileRegressor
-from sklearn.neural_network import MLPRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -16,11 +15,10 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatur
 from sklearn.pipeline import Pipeline
 from scipy.stats import uniform, randint
 
-# Import for Gaussian Process Regression (Kernel Regression)
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+# Import neural network regressor
+from sklearn.neural_network import MLPRegressor
 
-# Try to import additional ensemble models if installed.
+# Import for ensemble models if installed.
 try:
     from xgboost import XGBRegressor
 except ImportError:
@@ -114,35 +112,14 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
-        The dictionary now includes:
-          - Linear Regression (standard ordinary least squares on raw features)
-          - Multiple Regression (applies a second-order polynomial transformation before fitting a linear model)
-          - ElasticNet, SVR, tree-based models, and Neural Networks
-          - GLMs: Gamma, Poisson, and Inverse Gaussian Regression
-          - Bayesian and Quantile Regression
-          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed
-          - Kernel Regression via Gaussian Process Regression (with uncertainty estimates)
+        In this trimmed version we keep:
+          - SVR
+          - Random Forest
+          - Gradient Boosting
+          - Neural Network (MLPRegressor)
+          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
         """
         models = {
-            "Linear Regression": {
-                "model": LinearRegression(),
-                "params": {
-                    "fit_intercept": [True, False]
-                }
-            },
-            "Multiple Regression": {
-                "model": LinearRegression(),
-                "params": {
-                    "fit_intercept": [True, False]
-                }
-            },
-            "ElasticNet": {
-                "model": ElasticNet(),
-                "params": {
-                    "alpha": uniform(0.0001, 0.1),
-                    "l1_ratio": uniform(0, 1)
-                }
-            },
             "SVR": {
                 "model": SVR(),
                 "params": {
@@ -166,7 +143,8 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
-                    "subsample": uniform(0.6, 1.0)
+                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
+                    "subsample": uniform(0.6, 0.4)
                 }
             },
             "Neural Network": {
@@ -177,55 +155,10 @@ class EyeGlucoseModel:
                     "alpha": uniform(0.0001, 0.01),
                     "learning_rate_init": uniform(0.0001, 0.01)
                 }
-            },
-            # --- Generalized Linear Models ---
-            "Gamma Regression": {
-                "model": GammaRegressor(max_iter=1000),
-                "params": {
-                    "alpha": uniform(0.0001, 1.0)
-                }
-            },
-            "Poisson Regression": {
-                "model": PoissonRegressor(max_iter=1000),
-                "params": {
-                    "alpha": uniform(0.0001, 1.0)
-                }
-            },
-            "Inverse Gaussian Regression": {
-                "model": TweedieRegressor(power=3, link="log", max_iter=1000),
-                "params": {
-                    "alpha": uniform(0.0001, 1.0)
-                }
-            },
-            # --- Bayesian and Quantile Regression ---
-            "Bayesian Ridge": {
-                "model": BayesianRidge(),
-                "params": {
-                    "alpha_1": uniform(1e-6, 1e-2),
-                    "lambda_1": uniform(1e-6, 1e-2)
-                }
-            },
-            "Quantile Regression": {
-                "model": QuantileRegressor(quantile=0.5, solver='highs'),
-                "params": {
-                    "alpha": uniform(0.0001, 1.0),
-                    "quantile": [0.25, 0.5, 0.75]
-                }
-            },
-            # --- Kernel Regression: Gaussian Process Regression ---
-            "Gaussian Process Regression": {
-                "model": GaussianProcessRegressor(
-                    kernel=C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)),
-                    n_restarts_optimizer=5,
-                    random_state=42
-                ),
-                "params": {
-                    "alpha": uniform(1e-10, 1e-3)  # Noise level (nugget)
-                }
             }
         }
 
-        # --- Additional Tree-Based Models if installed ---
+        # Additional ensemble models if installed:
         if XGBRegressor is not None:
             models["XGBoost"] = {
                 "model": XGBRegressor(objective='reg:squarederror', verbosity=0, random_state=42),
@@ -233,8 +166,8 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
-                    "subsample": uniform(0.6, 1.0),
-                    "colsample_bytree": uniform(0.6, 1.0)
+                    "subsample": uniform(0.6, 0.4),
+                    "colsample_bytree": uniform(0.6, 0.4)
                 }
             }
         if LGBMRegressor is not None:
@@ -323,15 +256,7 @@ class EyeGlucoseModel:
 
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
-            # For "Multiple Regression", we override the preprocessor to include polynomial features.
-            if name == "Multiple Regression":
-                current_preprocessor = Pipeline([
-                    ('imputer', SimpleImputer(strategy='median')),
-                    ('scaler', scaler),
-                    ('poly', PolynomialFeatures(degree=2, include_bias=False))
-                ])
-            else:
-                current_preprocessor = preprocessor
+            current_preprocessor = preprocessor
 
             pipeline = Pipeline([
                 ('preprocessor', current_preprocessor),

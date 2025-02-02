@@ -122,7 +122,7 @@ class EyeGlucoseMonitor:
         self.prediction_tolerance = 0.1
         
         # EMA smoothing factor (alpha): closer to 1 => more responsive, closer to 0 => more smoothing.
-        self.alpha = 0.01
+        self.alpha = 0.009
 
         self.last_features = None  # Store the most recent feature dictionary
 
