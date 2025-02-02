@@ -1,20 +1,21 @@
 import os
 import cv2
+import pandas as pd
 import numpy as np
 import joblib
-import pandas as pd
 from datetime import datetime
-import logging
+from typing import Dict, Any
+import threading
 import time
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestRegressor
+from collections import deque
+from dataclasses import dataclass
+import logging
+import matplotlib.pyplot as plt
 
-# Configure logging.
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Set logging to show warnings (and errors) only.
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define the expected feature order.
-# (The regressor in the pipeline will expect features in this order.)
+# Define the expected feature order (must match training, ignoring the first two columns)
 FEATURES_ORDER = [
     'pupil_size',
     'sclera_redness',
@@ -30,179 +31,435 @@ FEATURES_ORDER = [
     'birefringence_index'
 ]
 
-# =============================================================================
-# Custom Transformer for Feature Extraction
-# =============================================================================
-class EyeFeatureExtractor(BaseEstimator, TransformerMixin):
+# ---------------------------------------------------------------------------
+# Updated Feature Extraction Functions using example “real” algorithms.
+# (Adjust thresholds/parameters to match your training-time setup.)
+# ---------------------------------------------------------------------------
+
+def get_pupil_size(image):
     """
-    This transformer is meant to mimic your training feature extraction.
-    Replace the dummy implementations with your actual image-processing algorithms.
+    Use HoughCircles to detect circular features (assumed pupils)
+    and return the average radius.
     """
-    def __init__(self):
-        # Initialize any parameters if needed.
-        pass
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        # X is expected to be an iterable of raw images.
-        features_list = []
-        for image in X:
-            # Extract each feature. (Replace the dummy code below with your real algorithms.)
-            pupil_size = self.get_pupil_size(image)
-            sclera_redness = self.get_sclera_redness(image)
-            vein_prominence = self.get_vein_prominence(image)
-            pupil_response_time = self.get_pupil_response_time(image)
-            ir_intensity = self.get_ir_intensity(image)
-            scleral_vein_density = self.get_scleral_vein_density(image)
-            ir_temperature = self.get_ir_temperature(image)
-            tear_film_reflectivity = self.get_tear_film_reflectivity(image)
-            pupil_dilation_rate = self.get_pupil_dilation_rate(image)
-            sclera_color_balance = self.get_sclera_color_balance(image)
-            vein_pulsation_intensity = self.get_vein_pulsation_intensity(image)
-            birefringence_index = self.get_birefringence_index(image)
-
-            # Create the feature vector in the expected order.
-            features = [
-                pupil_size,
-                sclera_redness,
-                vein_prominence,
-                pupil_response_time,
-                ir_intensity,
-                scleral_vein_density,
-                ir_temperature,
-                tear_film_reflectivity,
-                pupil_dilation_rate,
-                sclera_color_balance,
-                vein_pulsation_intensity,
-                birefringence_index
-            ]
-            features_list.append(features)
-        return np.array(features_list)
-
-    # Dummy implementations (replace these with your actual algorithms):
-    def get_pupil_size(self, image):
-        # Example: Use HoughCircles to detect the pupil.
-        return np.random.uniform(20, 100)
-
-    def get_sclera_redness(self, image):
-        # Example: Convert to HSV and measure redness.
-        return np.random.uniform(0, 100)
-
-    def get_vein_prominence(self, image):
-        return np.random.uniform(0, 10)
-
-    def get_pupil_response_time(self, image):
-        # In a real system, this might compare pupil sizes across frames.
-        return np.random.uniform(0.1, 1.0)
-
-    def get_ir_intensity(self, image):
+    try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return float(np.mean(gray))
+        circles = cv2.HoughCircles(
+            gray,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=50,
+            param1=50,
+            param2=30,
+            minRadius=10,
+            maxRadius=80
+        )
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")
+            # Return the average radius as the pupil size.
+            return round(np.mean([r for (_, _, r) in circles]), 5)
+        else:
+            return 0.0
+    except Exception as e:
+        logging.error("Error in get_pupil_size: " + str(e))
+        return 0.0
 
-    def get_scleral_vein_density(self, image):
+def get_sclera_redness(image):
+    """
+    Convert the image to HSV and threshold the hue for red.
+    The percentage of red pixels is returned as the redness index.
+    """
+    try:
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        # Define a mask for red hues (adjust lower/upper bounds as needed)
+        mask = cv2.inRange(hsv, (0, 70, 50), (10, 255, 255))
+        redness = cv2.countNonZero(mask) / (image.shape[0] * image.shape[1]) * 100
+        return round(redness, 5)
+    except Exception as e:
+        logging.error("Error in get_sclera_redness: " + str(e))
+        return 0.0
+
+def get_vein_prominence(image):
+    """
+    Use Canny edge detection to approximate vein prominence.
+    A simple metric is calculated based on the normalized density of edges.
+    """
+    try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150)
-        return float(np.sum(edges)) / (image.shape[0] * image.shape[1])
+        prominence = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
+        # Multiply by a scaling factor if needed.
+        return round(prominence * 10, 5)
+    except Exception as e:
+        logging.error("Error in get_vein_prominence: " + str(e))
+        return 0.0
 
-    def get_ir_temperature(self, image):
-        # Example: Use the mean of one of the channels.
-        return float(np.mean(image[:, :, 2]))
+def get_pupil_response_time(image):
+    """
+    Placeholder for a temporal measurement.
+    A real implementation would compare the pupil size across consecutive frames.
+    """
+    return 0.0
 
-    def get_tear_film_reflectivity(self, image):
+def get_ir_intensity(image):
+    """
+    Calculate the IR intensity as the mean of the grayscale values.
+    """
+    try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return float(np.std(gray))
+        return round(np.mean(gray), 5)
+    except Exception as e:
+        logging.error("Error in get_ir_intensity: " + str(e))
+        return 0.0
 
-    def get_pupil_dilation_rate(self, image):
-        return np.random.uniform(0.1, 1.0)
+def get_scleral_vein_density(image):
+    """
+    Use Canny edge detection to compute the density of edges
+    as a proxy for the density of scleral veins.
+    """
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        density = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
+        return round(density, 5)
+    except Exception as e:
+        logging.error("Error in get_scleral_vein_density: " + str(e))
+        return 0.0
 
-    def get_sclera_color_balance(self, image):
+def get_ir_temperature(image):
+    """
+    Compute IR temperature using the mean of the red channel.
+    (Adjust this method to your calibration.)
+    """
+    try:
+        return round(np.mean(image[:, :, 2]), 5)
+    except Exception as e:
+        logging.error("Error in get_ir_temperature: " + str(e))
+        return 0.0
+
+def get_tear_film_reflectivity(image):
+    """
+    Use the standard deviation of the grayscale image as a measure of tear film reflectivity.
+    """
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return round(np.std(gray), 5)
+    except Exception as e:
+        logging.error("Error in get_tear_film_reflectivity: " + str(e))
+        return 0.0
+
+def get_pupil_dilation_rate(image):
+    """
+    Placeholder for pupil dilation rate.
+    A real implementation would compare pupil size across frames.
+    """
+    return 0.0
+
+def get_sclera_color_balance(image):
+    """
+    Compute the ratio of the mean red channel to the mean green channel.
+    """
+    try:
         r_mean = np.mean(image[:, :, 2])
         g_mean = np.mean(image[:, :, 1])
-        return float(r_mean / g_mean) if g_mean > 0 else 1.0
+        return round(r_mean / g_mean, 5) if g_mean > 0 else 1.0
+    except Exception as e:
+        logging.error("Error in get_sclera_color_balance: " + str(e))
+        return 1.0
 
-    def get_vein_pulsation_intensity(self, image):
+def get_vein_pulsation_intensity(image):
+    """
+    Estimate vein pulsation intensity using the mean of the Laplacian operator.
+    """
+    try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return float(np.mean(cv2.Laplacian(gray, cv2.CV_64F)))
+        pulsation = np.mean(cv2.Laplacian(gray, cv2.CV_64F))
+        return round(pulsation, 5)
+    except Exception as e:
+        logging.error("Error in get_vein_pulsation_intensity: " + str(e))
+        return 0.0
 
-    def get_birefringence_index(self, image):
+def get_birefringence_index(image):
+    """
+    Compute a birefringence index based on the normalized variance of the grayscale image.
+    """
+    try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        return float(np.var(gray) / 255.0)
+        return round(np.var(gray) / 255.0, 5)
+    except Exception as e:
+        logging.error("Error in get_birefringence_index: " + str(e))
+        return 0.0
 
-# =============================================================================
-# Training Code: Build and Save the Pipeline
-# =============================================================================
-def train_and_save_pipeline():
-    """
-    Simulate training with dummy images and labels.
-    In your actual training, use your real training images and measured blood glucose values.
-    """
-    num_samples = 50
-    # For demonstration, create dummy images (black images here).
-    X_train = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(num_samples)]
-    # Dummy blood glucose levels (replace with your actual training labels).
-    y_train = np.random.uniform(80, 150, size=num_samples)
-    
-    # Build the pipeline: first extract features, then use a regressor.
-    pipeline = Pipeline([
-        ('feature_extractor', EyeFeatureExtractor()),
-        ('regressor', RandomForestRegressor(n_estimators=10, random_state=42))
-    ])
-    
-    pipeline.fit(X_train, y_train)
-    joblib.dump(pipeline, 'eye_glucose_pipeline.pkl')
-    logging.info("Pipeline trained and saved as 'eye_glucose_pipeline.pkl'.")
+# ---------------------------
+# DataClass for Detection
+# ---------------------------
+@dataclass
+class EyeDetection:
+    left_eye: Any          # Detected left eye bounding boxes.
+    right_eye: Any         # Detected right eye bounding boxes.
+    ir_intensity: float    # Mean intensity of the grayscale frame.
+    timestamp: datetime
+    is_valid: bool         # Whether a valid face was detected.
+    eyes_open: bool        # Whether the eyes are considered "open" (or forced open in dark conditions).
+    face_rect: tuple = None  # The bounding box of the detected face (x, y, w, h)
 
-# =============================================================================
-# Real-Time Prediction Code: Load Pipeline and Predict from Webcam
-# =============================================================================
-def run_realtime_prediction():
-    """
-    Load the trained pipeline and run real-time prediction using the webcam.
-    The pipeline automatically applies feature extraction to each frame.
-    """
-    if not os.path.exists('eye_glucose_pipeline.pkl'):
-        logging.error("Pipeline not found. Please run training first.")
-        return
-
-    pipeline = joblib.load('eye_glucose_pipeline.pkl')
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        logging.error("Could not open webcam.")
-        return
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+# ---------------------------
+# Main Prediction Code
+# ---------------------------
+class EyeGlucoseMonitor:
+    def __init__(self, model_path: str = "eye_glucose_model.pkl"):
+        self.model_path = model_path
+        self.model = self._load_model()
         
-        # For this example, we use the entire frame as input.
-        # In your application, you may wish to detect and crop the eye region.
-        # Resize if necessary to match the input expected by your feature extractor.
-        # For example: frame = cv2.resize(frame, (100, 100))
+        # For improved detection consider using a DNN-based detector.
+        # For now, we continue with Haar cascades.
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        self.eye_cascades = {
+            "left": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'),
+            "right": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
+        }
+        self.last_valid_detection_time = time.time()
+        self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
+        self.prediction_lock = threading.Lock()
         
-        # Predict using the pipeline. Note that the pipeline expects a list of images.
-        prediction = pipeline.predict([frame])
-        pred_text = f"Predicted Glucose: {prediction[0]:.1f} mg/dL"
-        cv2.putText(frame, pred_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.imshow("Real-Time Glucose Prediction", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        # Store both instantaneous and EMA-smoothed predictions.
+        self.latest_smoothed_prediction = None
+        self.latest_instantaneous_prediction = None
+        self.last_instantaneous_prediction = None  # For computing rate-of-change
+        
+        # EMA smoothing factor (alpha): Adjust to trade off between responsiveness and smoothing.
+        self.alpha = 0.009
+        
+        self.last_features = None  # Store the most recent feature dictionary
+        
+        self.MIN_EYE_ASPECT_RATIO = 0.2  # Threshold for eyes open
+        self.MIN_IR_INTENSITY = 30       # Threshold for dark conditions
 
-    cap.release()
-    cv2.destroyAllWindows()
+        # Deques to store history of predictions for plotting.
+        self.time_history = deque(maxlen=200)
+        self.instantaneous_history = deque(maxlen=200)
+        self.smoothed_history = deque(maxlen=200)
 
-# =============================================================================
-# Main: Train if Necessary, then Run Prediction
-# =============================================================================
+    def _load_model(self) -> Any:
+        if os.path.exists(self.model_path):
+            try:
+                model = joblib.load(self.model_path)
+                return model
+            except Exception as e:
+                logging.error("Error loading model: " + str(e))
+                return None
+        else:
+            logging.error("Model file not found at: " + self.model_path)
+            return None
+
+    def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
+        """
+        Detect the face and eyes using Haar cascades.
+        Returns an EyeDetection dataclass instance.
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        ir_intensity = np.mean(gray)
+        enhanced = cv2.equalizeHist(gray)
+        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60))
+        
+        # Try a blurred image if no faces are found under low IR intensity.
+        if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
+            blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50))
+        
+        detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
+        if len(faces) > 0:
+            # Choose the largest face.
+            face = max(faces, key=lambda r: r[2] * r[3])
+            x, y, w, h = face
+            detection.face_rect = face  # Save the face bounding box.
+            face_roi = enhanced[y:y+h, x:x+w]
+            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
+            if ir_intensity < self.MIN_IR_INTENSITY:
+                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
+            else:
+                if len(left_eyes) > 0 or len(right_eyes) > 0:
+                    ear_list = []
+                    for (ex, ey, ew, eh) in (list(left_eyes) + list(right_eyes)):
+                        ratio = eh / ew if ew > 0 else 0
+                        ear_list.append(ratio)
+                    avg_ear = np.mean(ear_list) if ear_list else 0
+                    eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
+                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
+        return detection
+
+    def extract_features(self, frame: np.ndarray) -> Dict:
+        """
+        Extract features from the eye region.
+        Returns an empty dict if no eyes are detected.
+        """
+        detection = self.detect_face_and_eyes(frame)
+        if not detection.is_valid or (len(detection.left_eye) == 0 and len(detection.right_eye) == 0):
+            logging.warning("No valid eyes detected.")
+            return {}
+        if detection.face_rect is None:
+            logging.warning("No face rectangle detected.")
+            return {}
+
+        fx, fy, fw, fh = detection.face_rect
+        face_roi = frame[fy:fy+fh, fx:fx+fw]
+
+        # Create a union of detected eye boxes (relative to face ROI)
+        eye_boxes = []
+        for (ex, ey, ew, eh) in detection.left_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        for (ex, ey, ew, eh) in detection.right_eye:
+            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        if not eye_boxes:
+            logging.warning("No eye boxes found.")
+            return {}
+        ex_min = min(box[0] for box in eye_boxes)
+        ey_min = min(box[1] for box in eye_boxes)
+        ex_max = max(box[2] for box in eye_boxes)
+        ey_max = max(box[3] for box in eye_boxes)
+        # Convert from face ROI coordinates to full frame coordinates.
+        eye_roi_x = fx + ex_min
+        eye_roi_y = fy + ey_min
+        eye_roi_w = ex_max - ex_min
+        eye_roi_h = ey_max - ey_min
+
+        # Crop the eye region.
+        eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
+
+        features = {
+            "pupil_size": get_pupil_size(eye_roi),
+            "sclera_redness": get_sclera_redness(eye_roi),
+            "vein_prominence": get_vein_prominence(eye_roi),
+            "pupil_response_time": get_pupil_response_time(eye_roi),
+            "ir_intensity": get_ir_intensity(eye_roi),
+            "scleral_vein_density": get_scleral_vein_density(eye_roi),
+            "ir_temperature": get_ir_temperature(eye_roi),
+            "tear_film_reflectivity": get_tear_film_reflectivity(eye_roi),
+            "pupil_dilation_rate": get_pupil_dilation_rate(eye_roi),
+            "sclera_color_balance": get_sclera_color_balance(eye_roi),
+            "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
+            "birefringence_index": get_birefringence_index(eye_roi)
+        }
+        # Enforce the order expected by the model.
+        ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
+        logging.debug("Extracted features: " + str(ordered_features))
+        self.last_features = ordered_features
+        return ordered_features
+
+    def predict_glucose(self, features: Dict):
+        """
+        Predict blood glucose from features.
+        Uses both the instantaneous prediction from the model and an exponential moving average (EMA)
+        for smoothing.
+        """
+        result = None
+        try:
+            if self.model is not None and features:
+                df = pd.DataFrame([features], columns=FEATURES_ORDER)
+                prediction = self.model.predict(df)
+                if len(prediction) > 0:
+                    result = prediction[0]
+                    if result is None or (isinstance(result, float) and np.isnan(result)):
+                        result = None
+        except Exception as e:
+            logging.error("Prediction error: " + str(e))
+            result = None
+
+        with self.prediction_lock:
+            if result is not None:
+                self.latest_instantaneous_prediction = result
+            else:
+                self.latest_instantaneous_prediction = None
+
+            if result is not None:
+                if self.latest_smoothed_prediction is None:
+                    self.latest_smoothed_prediction = result
+                else:
+                    self.latest_smoothed_prediction = self.alpha * result + (1 - self.alpha) * self.latest_smoothed_prediction
+            else:
+                self.latest_smoothed_prediction = None
+
+            if self.last_instantaneous_prediction is not None and result is not None:
+                rate_of_change = result - self.last_instantaneous_prediction
+                if abs(rate_of_change) > 5:  # Adjust threshold as needed.
+                    logging.info(f"High rate of change detected: {rate_of_change:.2f} mg/dL")
+            self.last_instantaneous_prediction = result
+            self.last_features = features
+
+    def run(self):
+        # Create the live plot on the main thread.
+        plt.ion()  # Interactive mode on.
+        fig, ax = plt.subplots()
+        line_inst, = ax.plot([], [], label="Instantaneous", color="green")
+        line_avg, = ax.plot([], [], label="Smoothed", color="orange")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Blood Glucose (mg/dL)")
+        ax.legend()
+        
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Could not open webcam.")
+            return
+
+        start_time = time.time()
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            detection = self.detect_face_and_eyes(frame)
+            if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
+                features = self.extract_features(frame)
+                self.predict_glucose(features)
+                current_time = time.time() - start_time
+                with self.prediction_lock:
+                    inst_pred = self.latest_instantaneous_prediction if self.latest_instantaneous_prediction is not None else np.nan
+                    smooth_pred = self.latest_smoothed_prediction if self.latest_smoothed_prediction is not None else np.nan
+                self.time_history.append(current_time)
+                self.instantaneous_history.append(inst_pred)
+                self.smoothed_history.append(smooth_pred)
+
+                # Draw the detected face rectangle (blue) and eye boxes.
+                if detection.face_rect is not None:
+                    (x, y, w, h) = detection.face_rect
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                    for (ex, ey, ew, eh) in detection.left_eye:
+                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 255, 0), 2)
+                    for (ex, ey, ew, eh) in detection.right_eye:
+                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 0, 255), 2)
+            else:
+                with self.prediction_lock:
+                    self.latest_smoothed_prediction = None
+                    self.latest_instantaneous_prediction = None
+
+            # Update the live Matplotlib plot.
+            line_inst.set_data(self.time_history, self.instantaneous_history)
+            line_avg.set_data(self.time_history, self.smoothed_history)
+            ax.relim()
+            ax.autoscale_view()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+            # Display prediction text on the frame.
+            with self.prediction_lock:
+                inst_text = f"Inst: {self.latest_instantaneous_prediction:.1f} mg/dL" if self.latest_instantaneous_prediction is not None else "Inst: No Reading"
+                smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
+            cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+            cv2.imshow("Blood Glucose", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+            # A brief pause to update the plot.
+            plt.pause(0.001)
+
+        cap.release()
+        cv2.destroyAllWindows()
+        plt.ioff()
+        plt.show()
+
 if __name__ == "__main__":
-    # Check if the pipeline exists; if not, simulate training.
-    if not os.path.exists('eye_glucose_pipeline.pkl'):
-        logging.info("Pipeline not found. Starting training...")
-        train_and_save_pipeline()
-    else:
-        logging.info("Pipeline found. Loading and starting real-time prediction.")
-
-    # Run real-time prediction.
-    run_realtime_prediction()
+    monitor = EyeGlucoseMonitor()
+    monitor.run()
