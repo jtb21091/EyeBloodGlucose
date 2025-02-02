@@ -87,10 +87,10 @@ class EyeGlucoseModel:
         numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
         numeric_cols.remove("blood_glucose")  # Exclude target from outlier detection
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 6).any(axis=1)
+        outliers_z = (z_scores > 3).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
         removed_count = len(df) - len(df_clean)
-        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
+        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 3) in at least one non-blood_glucose variable")
         return df_clean
 
     def prepare_data(self):
