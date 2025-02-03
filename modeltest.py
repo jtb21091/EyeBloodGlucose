@@ -70,6 +70,18 @@ def capture_eye_image():
     x_max = max(x + w for (x, y, w, h) in open_eyes)
     y_max = max(y + h for (x, y, w, h) in open_eyes)
 
+    # --- New: Add margins to the bounding box ---
+    # Define a margin (e.g., 20% of the width/height)
+    margin_x = int(0.2 * (x_max - x_min))
+    margin_y = int(0.2 * (y_max - y_min))
+
+    # Expand the bounding box while ensuring it stays within the image boundaries
+    x_min = max(0, x_min - margin_x)
+    y_min = max(0, y_min - margin_y)
+    x_max = min(frame.shape[1], x_max + margin_x)
+    y_max = min(frame.shape[0], y_max + margin_y)
+    # -------------------------------------------
+
     # Crop the ROI from the original colored frame
     roi = frame[y_min:y_max, x_min:x_max]
 
