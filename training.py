@@ -148,7 +148,7 @@ class EyeGlucoseModel:
                 }
             },
             "Neural Network": {
-                "model": MLPRegressor(max_iter=1000, early_stopping=True, random_state=42),
+                "model": MLPRegressor(max_iter=100, early_stopping=False, random_state=42),
                 "params": {
                     "hidden_layer_sizes": [(64, 32), (128, 64), (64, 64, 32)],
                     "activation": ["relu", "tanh"],
