@@ -20,14 +20,15 @@ if "blood_glucose" in df.columns:
     
     # Plot histogram
     plt.figure(figsize=(10, 6))
-    count, bins, _ = plt.hist(blood_glucose, bins=30, density=True, edgecolor='black', alpha=0.7, label="Histogram")
+    count, bins, _ = plt.hist(blood_glucose, bins=30, edgecolor='black', alpha=0.7, label="Histogram")
 
     # Generate x values for the normal distribution curve
     x = np.linspace(min(blood_glucose), max(blood_glucose), 100)
     
-    # Compute normal distribution (bell curve)
-    pdf = norm.pdf(x, mean_value, std_dev)
-    
+    # Compute normal distribution (bell curve) and scale it to match histogram frequency
+    bin_width = bins[1] - bins[0]  # Width of each bin
+    pdf = norm.pdf(x, mean_value, std_dev) * sum(count) * bin_width  # Scale to match frequency
+
     # Plot the bell curve
     plt.plot(x, pdf, color='green', linewidth=2, label="Bell Curve (Normal Dist.)")
     
@@ -39,7 +40,7 @@ if "blood_glucose" in df.columns:
     
     plt.title("Histogram of Blood Glucose with Bell Curve")
     plt.xlabel("Blood Glucose (mg/dL)")
-    plt.ylabel("Density")
+    plt.ylabel("Frequency")  # Changed from Density to Frequency
     plt.grid(True)
     plt.legend()
     plt.show()
