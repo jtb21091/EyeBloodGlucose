@@ -18,9 +18,14 @@ if "blood_glucose" in df.columns:
     print("Mean Blood Glucose Value:", mean_value)
     print("Standard Deviation:", std_dev)
     
+    # Determine bin edges (rounded to the nearest 10)
+    min_bin = int(np.floor(min(blood_glucose) / 10) * 10)
+    max_bin = int(np.ceil(max(blood_glucose) / 10) * 10)
+    bins = np.arange(min_bin, max_bin + 10, 10)  # Bins in increments of 10
+
     # Plot histogram
     plt.figure(figsize=(10, 6))
-    count, bins, _ = plt.hist(blood_glucose, bins=30, edgecolor='black', alpha=0.7, label="Histogram")
+    count, bins, _ = plt.hist(blood_glucose, bins=bins, edgecolor='black', alpha=0.7, label="Histogram")
 
     # Generate x values for the normal distribution curve
     x = np.linspace(min(blood_glucose), max(blood_glucose), 100)
@@ -33,13 +38,13 @@ if "blood_glucose" in df.columns:
     plt.plot(x, pdf, color='green', linewidth=2, label="Bell Curve (Normal Dist.)")
     
     # Add vertical lines for mean and median
-    plt.axvline(mean_value, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_value:.2f}')
+    plt.axvline(mean_value, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_value:.0f}')
     
     median_value = blood_glucose.median()
-    plt.axvline(median_value, color='blue', linestyle='-.', linewidth=2, label=f'Median: {median_value:.2f}')
+    plt.axvline(median_value, color='blue', linestyle='-.', linewidth=2, label=f'Median: {median_value:.0f}')
     
-    # Set x-axis ticks to show bin edges
-    plt.xticks(bins, rotation=45)  # Rotate for better visibility
+    # Set x-axis ticks to show bin edges in whole numbers
+    plt.xticks(bins, [f"{int(b)}" for b in bins])  # Convert to integers
     
     plt.title("Histogram of Blood Glucose with Bell Curve")
     plt.xlabel("Blood Glucose (mg/dL)")
