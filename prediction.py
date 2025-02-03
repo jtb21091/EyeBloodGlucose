@@ -433,11 +433,14 @@ class EyeGlucoseMonitor:
         if not cap.isOpened():
             print("Could not open webcam.")
             return
+        else:
+            print("Webcam successfully opened.")
 
         start_time = time.time()
         while True:
             ret, frame = cap.read()
             if not ret:
+                print("No frame received from the webcam.")
                 break
 
             detection = self.detect_face_and_eyes(frame)
