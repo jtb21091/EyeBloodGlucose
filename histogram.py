@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from scipy.stats import norm
 
 # Load the CSV file (adjust the path if needed)
@@ -45,7 +46,13 @@ if "blood_glucose" in df.columns:
     # Set x-axis ticks to show bin edges as whole numbers
     plt.xticks(bins, [f"{int(b)}" for b in bins])
     
-    plt.title("Histogram of Blood Glucose with Bell Curve")
+    # KDE plot with bandwidth adjustment
+    sns.kdeplot(blood_glucose, color='purple', linewidth=2, label="KDE Curve", bw_adjust=0.5)
+    
+    # Log-transformed KDE
+    sns.kdeplot(np.log(blood_glucose), color='orange', linewidth=2, linestyle='dashed', label="Log-KDE Curve")
+    
+    plt.title("Histogram of Blood Glucose with Bell Curve and KDE")
     plt.xlabel("Blood Glucose (mg/dL)")
     plt.ylabel("Frequency")
     plt.grid(True)
@@ -54,4 +61,3 @@ if "blood_glucose" in df.columns:
 
 else:
     print("Column 'blood_glucose' not found in the CSV file.")
-    
