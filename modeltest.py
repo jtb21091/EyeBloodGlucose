@@ -1,8 +1,7 @@
 import os
 import cv2
-import dlib
-import numpy as np
 import pandas as pd
+import numpy as np
 import logging
 from datetime import datetime
 
@@ -14,13 +13,20 @@ LABELS_FILE = "eye_glucose_data/labels.csv"
 IMAGE_DIR = "eye_glucose_data/images"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 
-# dlib face detector and shape predictor paths
-FACE_DETECTOR = dlib.get_frontal_face_detector()
-SHAPE_PREDICTOR_PATH = "shape_predictor_68_face_landmarks.dat"  # Update with your path
-shape_predictor = dlib.shape_predictor(SHAPE_PREDICTOR_PATH)
+# Haar cascade for eye detection
+EYE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_eye.xml"
+eye_cascade = cv2.CascadeClassifier(EYE_CASCADE_PATH)
+if eye_cascade.empty():
+    logging.error("Failed to load Haar cascade. Check the file path: %s", EYE_CASCADE_PATH)
+    exit(1)
 
-def capture_eye_image_refined():
-    """Captures an image from the webcam and refines the capture to just the eye region using facial landmarks."""
+# Constants for detection tuning
+SCALE_FACTOR = 1.05
+MIN_NEIGHBORS = 3
+OPEN_THRESHOLD = 0.3  # Heuristic ratio threshold
+
+def capture_eye_image():
+    """Captures an image from the webcam, pre-processes it for low light, and detects open eyes."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         logging.error("Could not open webcam.")
@@ -36,49 +42,44 @@ def capture_eye_image_refined():
     finally:
         cap.release()
 
-    # Convert frame to grayscale for detection
+    # Convert frame to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # Detect faces in the image
-    faces = FACE_DETECTOR(gray)
-    if len(faces) == 0:
-        logging.info("No face detected.")
+    # Enhance contrast using CLAHE for low-light conditions
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced_gray = clahe.apply(gray)
+
+    # Optionally, reduce noise (e.g., using a Gaussian blur)
+    enhanced_gray = cv2.GaussianBlur(enhanced_gray, (5, 5), 0)
+
+    # Detect eyes with tuned parameters
+    eyes = eye_cascade.detectMultiScale(enhanced_gray, scaleFactor=SCALE_FACTOR, minNeighbors=MIN_NEIGHBORS)
+    if len(eyes) == 0:
+        logging.info("No eyes detected. Data not added.")
         return None, None
 
-    # For simplicity, work with the first detected face
-    face = faces[0]
+    # Filter for open eyes based on height-to-width ratio
+    open_eyes = [(x, y, w, h) for (x, y, w, h) in eyes if (h / w) > OPEN_THRESHOLD]
+    if not open_eyes:
+        logging.info("Eyes appear to be closed. Data not added.")
+        return None, None
 
-    # Get the 68 facial landmarks
-    landmarks = shape_predictor(gray, face)
-    # Convert landmarks to a NumPy array
-    landmarks_np = np.array([[landmarks.part(i).x, landmarks.part(i).y] for i in range(68)])
+    # Determine bounding box that encloses all detected open eyes
+    x_min = min(x for (x, y, w, h) in open_eyes)
+    y_min = min(y for (x, y, w, h) in open_eyes)
+    x_max = max(x + w for (x, y, w, h) in open_eyes)
+    y_max = max(y + h for (x, y, w, h) in open_eyes)
 
-    # Choose which eye to extract (e.g., left eye). dlib's 68-point model uses:
-    # - Points 36-41 for the left eye.
-    left_eye_points = landmarks_np[36:42]
+    # Crop the ROI from the original colored frame
+    roi = frame[y_min:y_max, x_min:x_max]
 
-    # Create a convex hull around the eye landmarks to tightly fit the eye shape.
-    hull = cv2.convexHull(left_eye_points)
-    # Get bounding rectangle from the convex hull.
-    x, y, w, h = cv2.boundingRect(hull)
-
-    # Optionally, you could add some padding to the ROI.
-    padding = 5
-    x = max(x - padding, 0)
-    y = max(y - padding, 0)
-    w = w + 2 * padding
-    h = h + 2 * padding
-
-    # Crop the eye ROI from the original colored frame.
-    eye_roi = frame[y:y+h, x:x+w]
-
-    # Save the ROI with a timestamped filename.
+    # Save the ROI with a timestamped filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"eye_{timestamp}.jpg"
     filepath = os.path.join(IMAGE_DIR, filename)
-    cv2.imwrite(filepath, eye_roi)
-    logging.info("Refined eye region saved: %s", filepath)
-    return filename, eye_roi
+    cv2.imwrite(filepath, roi)
+    logging.info("Eye region saved: %s", filepath)
+    return filename, roi
 
 def get_birefringence_index(image):
     """Estimate birefringence using edge density and gradient contrast."""
@@ -98,13 +99,13 @@ def get_ir_temperature(image):
     return round(temperature, 14)
 
 def update_data():
-    """Capture a refined eye image, compute indices, and update the CSV dataset."""
-    filename, eye_roi = capture_eye_image_refined()
-    if filename is None or eye_roi is None:
+    """Capture an eye image, compute indices, and update the CSV dataset."""
+    filename, roi = capture_eye_image()
+    if filename is None or roi is None:
         return
 
-    birefringence_index = get_birefringence_index(eye_roi)
-    ir_temperature = get_ir_temperature(eye_roi)
+    birefringence_index = get_birefringence_index(roi)
+    ir_temperature = get_ir_temperature(roi)
 
     # Define CSV columns
     columns = [
