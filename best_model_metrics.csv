@@ -4,16 +4,15 @@ Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 RandomForestRegressor(max_depth=8, min_samples_leaf=3,
-                                       min_samples_split=4,
-                                       n_estimators=283))])",
+                 RandomForestRegressor(max_depth=7, min_samples_leaf=2,
+                                       n_estimators=322))])",
 Best Model Hyperparameters,,
-  regressor__max_depth,8,
-  regressor__min_samples_leaf,3,
-  regressor__min_samples_split,4,
-  regressor__n_estimators,283,
-R²,0.4308058398428638,0.94
-MSE,861.6098757989174,6.2
-MAE,22.943187156222308,2.1
-MARD,19.052290344009464,10.5
-Sigma Level,0.5061456263122234,3.0
+  regressor__max_depth,7,
+  regressor__min_samples_leaf,2,
+  regressor__min_samples_split,2,
+  regressor__n_estimators,322,
+R²,0.40720681103590106,0.94
+MSE,846.1868266586719,6.2
+MAE,23.018596973210716,2.1
+MARD,17.88549473584258,10.5
+Sigma Level,0.4873063329882555,3.0
