@@ -11,6 +11,7 @@ eye_glucose_data/images/
 .vscode/
 .env
 .DS_Store
+.venv
 
 # Ignore Jupyter notebook checkpoints (if used)
 .ipynb_checkpoints/
