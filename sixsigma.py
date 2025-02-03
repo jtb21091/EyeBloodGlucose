@@ -13,9 +13,11 @@ numeric_cols = [col for col in df.select_dtypes(include=[np.number]).columns if 
 z_scores = np.abs((df[numeric_cols] - df[numeric_cols].mean()) / df[numeric_cols].std())
 outliers = (z_scores > 6)
 
-# Extract rows where any column has a Z-score > 6
+# Extract rows where any column has a Z-score > 6 (keeping all columns)
 outlier_values = df[outliers.any(axis=1)]
 
-# Save the outlier values to a CSV file named "sixsigma.csv"
+# Save the result to a CSV file with all columns included
 output_file_path = "sixsigma.csv"
-df[outliers].dropna(how='all').to_csv(output_file_path, index=False)
+outlier_values.to_csv(output_file_path, index=False)
+
+print(f"Outlier data saved to: {output_file_path}")
