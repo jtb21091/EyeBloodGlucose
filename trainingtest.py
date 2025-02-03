@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import logging
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Lasso
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -32,9 +32,12 @@ try:
 except ImportError:
     CatBoostRegressor = None
 
+# Additional imports for alternative approaches:
+from sklearn.feature_selection import SelectFromModel
+from sklearn.base import BaseEstimator, TransformerMixin
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 #########################################
 # Helper functions to compute extra metrics
@@ -53,14 +56,56 @@ def compute_sigma_level(y_true, y_pred, TEa=15):
     return (TEa - np.abs(bias)) / sd
 
 #########################################
+# Custom Transformer for Manual Feature Weighting
+#########################################
+
+class FeatureWeighter(BaseEstimator, TransformerMixin):
+    """
+    A custom transformer that multiplies each feature by a specified weight.
+    """
+    def __init__(self, weights=None):
+        """
+        Parameters:
+            weights (dict): A dictionary mapping feature names to their weight.
+                            If None, all features are assigned a weight of 1.0.
+        """
+        self.weights = weights
+
+    def fit(self, X, y=None):
+        if self.weights is None:
+            if hasattr(X, "columns"):
+                self.weights = {col: 1.0 for col in X.columns}
+            else:
+                raise ValueError("When using a NumPy array, please provide a weights dictionary with proper feature names.")
+        return self
+
+    def transform(self, X):
+        # If X is not a DataFrame, convert it using the keys from self.weights as column names.
+        if not hasattr(X, "columns"):
+            X = pd.DataFrame(X, columns=list(self.weights.keys()))
+        X_copy = X.copy()
+        for col in X_copy.columns:
+            if col in self.weights:
+                X_copy[col] = X_copy[col] * self.weights[col]
+        # Return as a numpy array so that subsequent steps in the pipeline work as expected.
+        return X_copy.values
+
+#########################################
 # Main Model Training Class
 #########################################
 
 class EyeGlucoseModel:
-    def __init__(self, labels_file="eye_glucose_data/labels.csv", model_file="eye_glucose_model.pkl"):
+    def __init__(self, labels_file="eye_glucose_data/labels.csv", model_file="eye_glucose_model.pkl", preprocessor_choice="default"):
+        """
+        preprocessor_choice options:
+            - "default": Only imputation and scaling.
+            - "custom_weighting": Uses a custom transformer to weight features.
+            - "lasso_selection": Uses Lasso-based feature selection.
+        """
         self.labels_file = labels_file
         self.model_file = model_file
         self.best_model = None
+        self.preprocessor_choice = preprocessor_choice
 
     def remove_outliers(self, df):
         df_clean = df.copy()
@@ -110,15 +155,6 @@ class EyeGlucoseModel:
         return X, y
 
     def get_model_configurations(self):
-        """
-        Return a dictionary of models and hyperparameter search spaces.
-        In this trimmed version we keep:
-          - SVR
-          - Random Forest
-          - Gradient Boosting
-          - Neural Network (MLPRegressor)
-          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
-        """
         models = {
             "SVR": {
                 "model": SVR(),
@@ -143,7 +179,6 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
-                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
                     "subsample": uniform(0.6, 0.4)
                 }
             },
@@ -158,7 +193,6 @@ class EyeGlucoseModel:
             }
         }
 
-        # Additional ensemble models if installed:
         if XGBRegressor is not None:
             models["XGBoost"] = {
                 "model": XGBRegressor(objective='reg:squarederror', verbosity=0, random_state=42),
@@ -215,36 +249,21 @@ class EyeGlucoseModel:
         plt.show()
 
     def save_metrics_to_csv(self, best_model_name, metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv"):
-        """
-        Saves the best model details and performance metrics to a CSV file.
-        
-        Parameters:
-            best_model_name (str): Name of the best model.
-            metrics (dict): A dictionary containing performance metrics (e.g., R2, MSE, MAE, MARD, Sigma).
-            cgm_benchmarks (dict): A dictionary containing benchmark values for each metric.
-            best_model_details (str): String representation of the best model.
-            best_model_params (dict): Best hyperparameters of the best model.
-            filename (str): The name of the CSV file to save.
-        """
-        # Create a list of dictionaries (rows) to store the details
         rows = [
             {"Metric": "Best Model Name", "Value": best_model_name, "CGM Benchmark": ""},
             {"Metric": "Best Model Details", "Value": best_model_details, "CGM Benchmark": ""}
         ]
         
-        # Add hyperparameters as rows
         rows.append({"Metric": "Best Model Hyperparameters", "Value": "", "CGM Benchmark": ""})
         for param, value in best_model_params.items():
             rows.append({"Metric": f"  {param}", "Value": value, "CGM Benchmark": ""})
         
-        # Add performance metrics and their corresponding CGM benchmarks
         rows.append({"Metric": "R²", "Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks.get("R²", "")})
         rows.append({"Metric": "MSE", "Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks.get("MSE", "")})
         rows.append({"Metric": "MAE", "Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks.get("MAE", "")})
         rows.append({"Metric": "MARD", "Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks.get("MARD", "")})
         rows.append({"Metric": "Sigma Level", "Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks.get("Sigma Level", "")})
         
-        # Convert the rows into a DataFrame and save as CSV
         df = pd.DataFrame(rows)
         df.to_csv(filename, index=False)
         logging.info(f"Best model metrics and details saved to: {filename}")
@@ -253,15 +272,43 @@ class EyeGlucoseModel:
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # --- Default Preprocessing Pipeline ---
-        use_poly_features = False  # Global flag (used by all models except those with custom pipelines)
-        use_robust_scaler = False  # Change to True if needed.
-        scaler = RobustScaler() if use_robust_scaler else StandardScaler()
-
-        preprocessor = Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', scaler)
-        ])
+        # Select preprocessor based on the chosen alternative approach.
+        if self.preprocessor_choice == "custom_weighting":
+            # Use custom weighting via FeatureWeighter.
+            custom_weights = {
+                'pupil_size': 0.0041,
+                'sclera_redness': 0.0005,
+                'vein_prominence': 0.0159,
+                'pupil_response_time': 0.00003,
+                'ir_intensity': 0.00002,
+                'scleral_vein_density': 0.0023,
+                'ir_temperature': 0.1042,
+                'tear_film_reflectivity': 0.0195,
+                'pupil_dilation_rate': 0.0003,
+                'sclera_color_balance': 0.0006,
+                'vein_pulsation_intensity': 0.0145,
+                'birefringence_index': 0.8380
+            }
+            preprocessor = Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('feature_weighter', FeatureWeighter(weights=custom_weights)),
+                ('scaler', StandardScaler())
+            ])
+        elif self.preprocessor_choice == "lasso_selection":
+            # Use Lasso-based feature selection.
+            lasso_estimator = Lasso(alpha=0.1, random_state=42)
+            feature_selector = SelectFromModel(lasso_estimator)
+            preprocessor = Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler()),
+                ('feature_selection', feature_selector)
+            ])
+        else:
+            # Default pipeline: imputation and scaling only.
+            preprocessor = Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ])
 
         best_score = float('-inf')
         best_model_name = None
@@ -271,17 +318,15 @@ class EyeGlucoseModel:
         best_mae = None
         best_mard = None
         best_sigma = None
-        best_model_params = None  # To store best hyperparameters
+        best_model_params = None
 
         models = self.get_model_configurations()
         n_iter_search = 100
 
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
-            current_preprocessor = preprocessor
-
             pipeline = Pipeline([
-                ('preprocessor', current_preprocessor),
+                ('preprocessor', preprocessor),
                 ('regressor', config['model'])
             ])
             search = RandomizedSearchCV(
@@ -359,5 +404,6 @@ class EyeGlucoseModel:
         logging.info(f"Best model saved as: {self.model_file}")
 
 if __name__ == "__main__":
-    model_trainer = EyeGlucoseModel()
+    # Choose the preprocessor option: "default", "custom_weighting", or "lasso_selection"
+    model_trainer = EyeGlucoseModel(preprocessor_choice="custom_weighting")
     model_trainer.train_model()

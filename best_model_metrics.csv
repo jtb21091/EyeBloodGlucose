@@ -1,19 +1,31 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Gradient Boosting,
+Best Model Name,Random Forest,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
+                                 ('feature_weighter',
+                                  FeatureWeighter(weights={'birefringence_index': 0.838,
+                                                           'ir_intensity': 2e-05,
+                                                           'ir_temperature': 0.1042,
+                                                           'pupil_dilation_rate': 0.0003,
+                                                           'pupil_response_time': 3e-05,
+                                                           'pupil_size': 0.0041,
+                                                           'sclera_color_balance': 0.0006,
+                                                           'sclera_redness': 0.0005,
+                                                           'scleral_vein_density': 0.0023,
+                                                           'tear_film_reflectivity': 0.0195,
+                                                           'vein_prominence': 0.0159,
+                                                           'vein_pulsation_intensity': 0.0145})),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 GradientBoostingRegressor(learning_rate=0.18160125976275493,
-                                           n_estimators=116,
-                                           subsample=0.9978202043189364))])",
+                 RandomForestRegressor(max_depth=37, min_samples_split=4,
+                                       n_estimators=225))])",
 Best Model Hyperparameters,,
-  regressor__learning_rate,0.18160125976275493,
-  regressor__max_depth,3,
-  regressor__n_estimators,116,
-  regressor__subsample,0.9978202043189364,
-R²,0.5052419105737693,0.94
-MSE,1003.5264544501729,6.2
-MAE,24.86191836636008,2.1
-MARD,20.524624878252023,10.5
-Sigma Level,0.4000218404911848,3.0
+  regressor__max_depth,37,
+  regressor__min_samples_leaf,1,
+  regressor__min_samples_split,4,
+  regressor__n_estimators,225,
+R²,0.4840817420714115,0.94
+MSE,1046.4459929611355,6.2
+MAE,25.27406287110635,2.1
+MARD,21.051915352396687,10.5
+Sigma Level,0.41960452391713976,3.0

@@ -11,11 +11,42 @@ from collections import deque
 from dataclasses import dataclass
 import logging
 import matplotlib.pyplot as plt
+from sklearn.base import BaseEstimator, TransformerMixin  # Needed for FeatureWeighter
 
 # Set logging to show warnings (and errors) only.
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define the expected feature order (must match training, ignoring the first two columns)
+# ---------------------------
+# Custom Transformer: FeatureWeighter
+# ---------------------------
+class FeatureWeighter(BaseEstimator, TransformerMixin):
+    """
+    A custom transformer that multiplies each feature by a specified weight.
+    This definition must be available when loading a pickled model that uses it.
+    """
+    def __init__(self, weights=None):
+        self.weights = weights
+
+    def fit(self, X, y=None):
+        if self.weights is None:
+            if hasattr(X, "columns"):
+                self.weights = {col: 1.0 for col in X.columns}
+            else:
+                raise ValueError("When using a NumPy array, please provide a weights dictionary with proper feature names.")
+        return self
+
+    def transform(self, X):
+        if not hasattr(X, "columns"):
+            X = pd.DataFrame(X, columns=list(self.weights.keys()))
+        X_copy = X.copy()
+        for col in X_copy.columns:
+            if col in self.weights:
+                X_copy[col] = X_copy[col] * self.weights[col]
+        return X_copy.values
+
+# ---------------------------
+# Expected Feature Order
+# ---------------------------
 FEATURES_ORDER = [
     'pupil_size',
     'sclera_redness',
