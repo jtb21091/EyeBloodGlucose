@@ -16,7 +16,6 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # -------------------------
 # Linear Model Coefficients
 # -------------------------
-# These coefficients come from your table.
 INTERCEPT = 158.36230447500114
 COEFFICIENTS = {
     "sclera_color_balance": -21.083841315095434,
@@ -33,7 +32,7 @@ COEFFICIENTS = {
     "ir_intensity": 0.026267272816519388
 }
 
-# Define the expected feature order (must match training, ignoring the intercept)
+# Expected order for features (must match training)
 FEATURES_ORDER = [
     'pupil_size',
     'sclera_redness',
@@ -50,15 +49,9 @@ FEATURES_ORDER = [
 ]
 
 # ---------------------------------------------------------------------------
-# Feature Extraction Functions using example “real” algorithms.
-# (Adjust thresholds/parameters to match your training-time setup.)
+# Feature Extraction Functions
 # ---------------------------------------------------------------------------
-
 def get_pupil_size(image):
-    """
-    Use HoughCircles to detect circular features (assumed pupils)
-    and return the average radius.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         circles = cv2.HoughCircles(
@@ -82,13 +75,8 @@ def get_pupil_size(image):
         return 0.0
 
 def get_sclera_redness(image):
-    """
-    Convert the image to HSV and threshold the hue for red.
-    The percentage of red pixels is returned as the redness index.
-    """
     try:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        # Define a mask for red hues (adjust lower/upper bounds as needed)
         mask = cv2.inRange(hsv, (0, 70, 50), (10, 255, 255))
         redness = cv2.countNonZero(mask) / (image.shape[0] * image.shape[1]) * 100
         return round(redness, 5)
@@ -97,24 +85,16 @@ def get_sclera_redness(image):
         return 0.0
 
 def get_vein_prominence(image):
-    """
-    Use Canny edge detection to approximate vein prominence.
-    A simple metric is calculated based on the normalized density of edges.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150)
         prominence = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
-        # Multiply by a scaling factor if needed.
         return round(prominence * 10, 5)
     except Exception as e:
         logging.error("Error in get_vein_prominence: " + str(e))
         return 0.0
 
 def get_ir_intensity(image):
-    """
-    Calculate the IR intensity as the mean of the grayscale values.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return round(np.mean(gray), 5)
@@ -123,10 +103,6 @@ def get_ir_intensity(image):
         return 0.0
 
 def get_scleral_vein_density(image):
-    """
-    Use Canny edge detection to compute the density of edges
-    as a proxy for the density of scleral veins.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150)
@@ -137,10 +113,6 @@ def get_scleral_vein_density(image):
         return 0.0
 
 def get_ir_temperature(image):
-    """
-    Compute IR temperature using the mean of the red channel.
-    (Adjust this method to your calibration.)
-    """
     try:
         return round(np.mean(image[:, :, 2]), 5)
     except Exception as e:
@@ -148,9 +120,6 @@ def get_ir_temperature(image):
         return 0.0
 
 def get_tear_film_reflectivity(image):
-    """
-    Use the standard deviation of the grayscale image as a measure of tear film reflectivity.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return round(np.std(gray), 5)
@@ -159,9 +128,6 @@ def get_tear_film_reflectivity(image):
         return 0.0
 
 def get_sclera_color_balance(image):
-    """
-    Compute the ratio of the mean red channel to the mean green channel.
-    """
     try:
         r_mean = np.mean(image[:, :, 2])
         g_mean = np.mean(image[:, :, 1])
@@ -171,9 +137,6 @@ def get_sclera_color_balance(image):
         return 1.0
 
 def get_vein_pulsation_intensity(image):
-    """
-    Estimate vein pulsation intensity using the mean of the Laplacian operator.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         pulsation = np.mean(cv2.Laplacian(gray, cv2.CV_64F))
@@ -183,9 +146,6 @@ def get_vein_pulsation_intensity(image):
         return 0.0
 
 def get_birefringence_index(image):
-    """
-    Compute a birefringence index based on the normalized variance of the grayscale image.
-    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return round(np.var(gray) / 255.0, 5)
@@ -203,7 +163,7 @@ class EyeDetection:
     ir_intensity: float    # Mean intensity of the grayscale frame.
     timestamp: datetime
     is_valid: bool         # Whether a valid face was detected.
-    eyes_open: bool        # Whether the eyes are considered "open" (or forced open in dark conditions).
+    eyes_open: bool        # Whether the eyes are considered open.
     face_rect: tuple = None  # The bounding box of the detected face (x, y, w, h)
 
 # ---------------------------
@@ -211,11 +171,7 @@ class EyeDetection:
 # ---------------------------
 class EyeGlucoseMonitor:
     def __init__(self):
-        # We are now using a linear model defined by our coefficients.
-        # (No model is loaded from file.)
-        
-        # For improved detection consider using a DNN-based detector.
-        # For now, we continue with Haar cascades.
+        # Initialize Haar cascades.
         self.face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
@@ -251,10 +207,6 @@ class EyeGlucoseMonitor:
         self.pupil_history = deque(maxlen=30)  # Stores tuples of (timestamp, pupil_size)
 
     def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
-        """
-        Detect the face and eyes using Haar cascades.
-        Returns an EyeDetection dataclass instance.
-        """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
         enhanced = cv2.equalizeHist(gray)
@@ -288,16 +240,10 @@ class EyeGlucoseMonitor:
         return detection
 
     def update_pupil_history(self, pupil_size: float):
-        """
-        Update the temporal buffer with the current pupil size and timestamp.
-        """
         current_time = time.time()
         self.pupil_history.append((current_time, pupil_size))
 
     def compute_pupil_dilation_rate(self) -> float:
-        """
-        Compute the rate of change of pupil size (per second) using the two most recent measurements.
-        """
         if len(self.pupil_history) < 2:
             return 0.0
         t0, p0 = self.pupil_history[-2]
@@ -309,10 +255,6 @@ class EyeGlucoseMonitor:
         return round(rate, 5)
 
     def compute_pupil_response_time(self) -> float:
-        """
-        Provide a crude estimate of the pupil response time based on the dilation rate.
-        Here, the response time is defined as the inverse of the absolute dilation rate.
-        """
         rate = self.compute_pupil_dilation_rate()
         if rate == 0:
             return 0.0
@@ -320,10 +262,6 @@ class EyeGlucoseMonitor:
         return round(response_time, 5)
 
     def extract_features(self, frame: np.ndarray) -> dict:
-        """
-        Extract features from the eye region.
-        Returns an empty dict if no eyes are detected.
-        """
         detection = self.detect_face_and_eyes(frame)
         if not detection.is_valid or (len(detection.left_eye) == 0 and len(detection.right_eye) == 0):
             logging.warning("No valid eyes detected.")
@@ -358,10 +296,8 @@ class EyeGlucoseMonitor:
         eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
 
         # --- Temporal Measurements ---
-        # Compute the current pupil size and update the history.
         pupil_size = get_pupil_size(eye_roi)
         self.update_pupil_history(pupil_size)
-        # Compute temporal features using the history.
         pupil_dilation_rate = self.compute_pupil_dilation_rate()
         pupil_response_time = self.compute_pupil_response_time()
 
@@ -386,18 +322,10 @@ class EyeGlucoseMonitor:
         return ordered_features
 
     def predict_glucose(self, features: dict):
-        """
-        Predict blood glucose from features using the linear model defined by the intercept
-        and the coefficients from the provided table.
-        The prediction is:
-        
-            predicted_glucose = intercept + sum(coefficient * feature_value)
-        """
         result = None
         if features:
             result = INTERCEPT
             for feature, coef in COEFFICIENTS.items():
-                # Multiply the coefficient by the extracted feature value (defaulting to 0 if missing)
                 result += coef * features.get(feature, 0)
         
         with self.prediction_lock:
@@ -454,7 +382,7 @@ class EyeGlucoseMonitor:
                 self.instantaneous_history.append(inst_pred)
                 self.smoothed_history.append(smooth_pred)
 
-                # Draw the detected face rectangle (blue) and eye boxes.
+                # Draw the detected face and eyes.
                 if detection.face_rect is not None:
                     (x, y, w, h) = detection.face_rect
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
@@ -467,20 +395,42 @@ class EyeGlucoseMonitor:
                     self.latest_smoothed_prediction = None
                     self.latest_instantaneous_prediction = None
 
+            # ---------------------------
             # Update the live Matplotlib plot.
+            # ---------------------------
             line_inst.set_data(self.time_history, self.instantaneous_history)
             line_avg.set_data(self.time_history, self.smoothed_history)
+            # Instead of ax.collections.clear(), remove each collection individually.
+            for coll in ax.collections[:]:
+                coll.remove()
+            if len(self.smoothed_history) > 0:
+                smoothed_array = np.array(self.smoothed_history)
+                # Compute standard deviation over the instantaneous predictions.
+                current_std = np.std(self.instantaneous_history)
+                upper_band = smoothed_array + current_std
+                lower_band = smoothed_array - current_std
+                ax.fill_between(self.time_history, lower_band, upper_band, color='gray', alpha=0.3)
             ax.relim()
             ax.autoscale_view()
             fig.canvas.draw()
             fig.canvas.flush_events()
 
-            # Display prediction text on the frame.
+            # ---------------------------
+            # Overlay text on the webcam frame.
+            # ---------------------------
             with self.prediction_lock:
                 inst_text = f"Inst: {self.latest_instantaneous_prediction:.1f} mg/dL" if self.latest_instantaneous_prediction is not None else "Inst: No Reading"
                 smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
             cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+            # Compute the standard deviation over instantaneous history (if enough data).
+            if len(self.instantaneous_history) >= 2:
+                current_std = np.std(self.instantaneous_history)
+            else:
+                current_std = 0.0
+            std_text = f"Band: ±{current_std:.1f} mg/dL"
+            cv2.putText(frame, std_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+            
             cv2.imshow("Blood Glucose", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
