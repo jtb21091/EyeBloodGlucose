@@ -1,8 +1,11 @@
 ## EyeBloodGlucose
 Moonshot to measure blood glucose from your eyes
 https://github.com/jtb21091/Cherry/tree/main
+
 Best Model: Random Forest with R² Score: 0.55870
 2025-02-01 17:47:13,947 - INFO - Best model saved as: eye_glucose_model.pkl
+
+shape_predictor_68_face_landmarks.dat
 
 ## Steps
 
