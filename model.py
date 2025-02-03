@@ -2,64 +2,83 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
+import logging
 from datetime import datetime
 
-# Define file paths
-labels_file = "eye_glucose_data/labels.csv"
-image_dir = "eye_glucose_data/images"
-os.makedirs(image_dir, exist_ok=True)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Load Haar cascade for eye detection
-eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
+# Define file paths and constants
+LABELS_FILE = "eye_glucose_data/labels.csv"
+IMAGE_DIR = "eye_glucose_data/images"
+os.makedirs(IMAGE_DIR, exist_ok=True)
+
+# Haar cascade for eye detection
+EYE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_eye.xml"
+eye_cascade = cv2.CascadeClassifier(EYE_CASCADE_PATH)
+if eye_cascade.empty():
+    logging.error("Failed to load Haar cascade. Check the file path: %s", EYE_CASCADE_PATH)
+    exit(1)
+
+# Constants for detection tuning
+SCALE_FACTOR = 1.05
+MIN_NEIGHBORS = 3
+OPEN_THRESHOLD = 0.3  # Heuristic ratio threshold
 
 def capture_eye_image():
+    """Captures an image from the webcam, pre-processes it for low light, and detects open eyes."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Error: Could not open webcam.")
+        logging.error("Could not open webcam.")
         return None, None
 
-    cv2.waitKey(500)  # Delay for camera stabilization
-    ret, frame = cap.read()
-    cap.release()
+    try:
+        # Allow camera to stabilize
+        cv2.waitKey(500)
+        ret, frame = cap.read()
+        if not ret:
+            logging.error("Could not capture image from webcam.")
+            return None, None
+    finally:
+        cap.release()
 
-    if not ret:
-        print("Error: Could not capture image.")
-        return None, None
-
-    # Convert to grayscale for detection
+    # Convert frame to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    eyes = eye_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
 
-    # If no eyes detected, do not proceed.
+    # Enhance contrast using CLAHE for low-light conditions
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced_gray = clahe.apply(gray)
+
+    # Optionally, reduce noise (e.g., using a Gaussian blur)
+    enhanced_gray = cv2.GaussianBlur(enhanced_gray, (5, 5), 0)
+
+    # Detect eyes with tuned parameters
+    eyes = eye_cascade.detectMultiScale(enhanced_gray, scaleFactor=SCALE_FACTOR, minNeighbors=MIN_NEIGHBORS)
     if len(eyes) == 0:
-        print("No eyes detected. Data not added.")
+        logging.info("No eyes detected. Data not added.")
         return None, None
 
-    # Check if eyes are open by measuring the height-to-width ratio.
-    # This threshold is heuristic and may need adjustment.
-    open_threshold = 0.3  
-    open_eyes = [(x, y, w, h) for (x, y, w, h) in eyes if (h / w) > open_threshold]
-    
-    if len(open_eyes) == 0:
-        print("Eyes appear to be closed. Data not added.")
+    # Filter for open eyes based on height-to-width ratio
+    open_eyes = [(x, y, w, h) for (x, y, w, h) in eyes if (h / w) > OPEN_THRESHOLD]
+    if not open_eyes:
+        logging.info("Eyes appear to be closed. Data not added.")
         return None, None
 
-    # Compute a bounding box that encloses all open eyes.
-    x_min = min([x for (x, y, w, h) in open_eyes])
-    y_min = min([y for (x, y, w, h) in open_eyes])
-    x_max = max([x + w for (x, y, w, h) in open_eyes])
-    y_max = max([y + h for (x, y, w, h) in open_eyes])
+    # Determine bounding box that encloses all detected open eyes
+    x_min = min(x for (x, y, w, h) in open_eyes)
+    y_min = min(y for (x, y, w, h) in open_eyes)
+    x_max = max(x + w for (x, y, w, h) in open_eyes)
+    y_max = max(y + h for (x, y, w, h) in open_eyes)
 
-    # Crop the image to the region containing the open eyes.
+    # Crop the ROI from the original colored frame
     roi = frame[y_min:y_max, x_min:x_max]
 
-    # Save the cropped eye region
+    # Save the ROI with a timestamped filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"eye_{timestamp}.jpg"
-    filepath = os.path.join(image_dir, filename)
+    filepath = os.path.join(IMAGE_DIR, filename)
     cv2.imwrite(filepath, roi)
-    print(f"Eye region saved: {filepath}")
-
+    logging.info("Eye region saved: %s", filepath)
     return filename, roi
 
 def get_birefringence_index(image):
@@ -67,47 +86,44 @@ def get_birefringence_index(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
     gradient = cv2.Sobel(gray, cv2.CV_64F, 1, 1, ksize=5)
-    return round((np.mean(edges) + np.std(gradient)) / 2, 5)
+    return round((np.mean(edges) + np.std(gradient)) / 2, 14)
 
 def get_ir_temperature(image):
     """
     Simulate the IR temperature calculation.
     This dummy calculation converts the grayscale average intensity to a temperature range.
-    For a real application, replace this with a proper IR sensor measurement and calibration.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     avg_intensity = np.mean(gray)
-    # Map average intensity (0-255) to a temperature range (e.g., 20°C to 60°C)
-    temperature = (avg_intensity / 255.0) * 40 + 20
-    return round(temperature, 2)
+    temperature = (avg_intensity / 255.0) * 40 + 20  # Map to 20°C to 60°C
+    return round(temperature, 14)
 
 def update_data():
+    """Capture an eye image, compute indices, and update the CSV dataset."""
     filename, roi = capture_eye_image()
     if filename is None or roi is None:
-        # If no valid open eyes are detected, exit without adding data.
         return
 
     birefringence_index = get_birefringence_index(roi)
-    ir_temperature = get_ir_temperature(roi)  # Calculate IR temperature from the ROI
+    ir_temperature = get_ir_temperature(roi)
 
-    # Define the columns for our CSV
+    # Define CSV columns
     columns = [
-        'filename', 'blood_glucose', 'pupil_size', 'sclera_redness', 
-        'vein_prominence', 'pupil_response_time', 'ir_intensity', 
-        'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity', 
-        'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity', 
+        'filename', 'blood_glucose', 'pupil_size', 'sclera_redness',
+        'vein_prominence', 'pupil_response_time', 'ir_intensity',
+        'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
+        'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity',
         'birefringence_index'
     ]
 
-    # If the CSV file does not exist or is empty, create a new DataFrame with the columns.
-    if not os.path.exists(labels_file) or os.stat(labels_file).st_size == 0:
+    # Load or initialize the DataFrame
+    if not os.path.exists(LABELS_FILE) or os.stat(LABELS_FILE).st_size == 0:
         df = pd.DataFrame(columns=columns)
     else:
-        df = pd.read_csv(labels_file)
-        # Use the columns already present in the file
+        df = pd.read_csv(LABELS_FILE)
         columns = df.columns.tolist()
 
-    # Create a new row of data. Ensure the number of values matches the number of columns.
+    # Create a new data entry (using placeholder/random values where appropriate)
     new_entry = pd.DataFrame([[
         filename,                          # filename
         "",                                # blood_glucose (placeholder)
@@ -122,12 +138,12 @@ def update_data():
         np.random.uniform(0, 255),          # pupil_dilation_rate
         np.random.uniform(0.1, 1.0),          # sclera_color_balance
         np.random.uniform(0.8, 1.2),          # vein_pulsation_intensity
-        birefringence_index                # birefringence_index
+        birefringence_index                 # birefringence_index
     ]], columns=columns)
 
     df = pd.concat([df, new_entry], ignore_index=True)
-    df.to_csv(labels_file, index=False)
-    print(f"New data added to CSV: {filename}")
+    df.to_csv(LABELS_FILE, index=False)
+    logging.info("New data added to CSV: %s", filename)
 
 if __name__ == "__main__":
     update_data()

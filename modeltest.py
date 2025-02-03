@@ -86,7 +86,7 @@ def get_birefringence_index(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
     gradient = cv2.Sobel(gray, cv2.CV_64F, 1, 1, ksize=5)
-    return round((np.mean(edges) + np.std(gradient)) / 2, 5)
+    return round((np.mean(edges) + np.std(gradient)) / 2, 14)
 
 def get_ir_temperature(image):
     """

@@ -32,3 +32,4 @@ Below are the metrics for the best model compared to CGM benchmarks:
 
 ![Image](pngfiles/3.png)
 
+![Image](pngfiles/4.png)
