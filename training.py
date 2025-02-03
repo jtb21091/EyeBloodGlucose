@@ -319,7 +319,7 @@ class EyeGlucoseModel:
             plt.show()
             self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
             
-            if r2 > best_score:
+            if best_mse is None or mse < best_mse:
                 best_score = r2
                 best_estimator = search.best_estimator_
                 best_model_name = name

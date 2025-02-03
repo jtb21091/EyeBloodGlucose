@@ -4,16 +4,16 @@ Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 GradientBoostingRegressor(learning_rate=0.011555458832196034,
-                                           max_depth=6, n_estimators=272,
-                                           subsample=0.6777095814048169))])",
+                 GradientBoostingRegressor(learning_rate=0.016175348288740735,
+                                           max_depth=4, n_estimators=443,
+                                           subsample=0.9329770563201687))])",
 Best Model Hyperparameters,,
-  regressor__learning_rate,0.011555458832196034,
-  regressor__max_depth,6,
-  regressor__n_estimators,272,
-  regressor__subsample,0.6777095814048169,
-R²,0.4549375908751596,0.94
-MSE,1270.0013586729153,6.2
-MAE,28.103954017064275,2.1
-MARD,20.952217458755655,10.5
-Sigma Level,0.3553997511290072,3.0
+  regressor__learning_rate,0.016175348288740735,
+  regressor__max_depth,4,
+  regressor__n_estimators,443,
+  regressor__subsample,0.9329770563201687,
+R²,0.4838457666901522,0.94
+MSE,1211.799800981391,6.2
+MAE,28.903127444289947,2.1
+MARD,21.55927889169161,10.5
+Sigma Level,0.4201942407805122,3.0
