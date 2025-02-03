@@ -350,6 +350,9 @@ class EyeGlucoseMonitor:
             self.last_features = features
 
     def run(self):
+        # Set the multiplier for the band (2 times the standard deviation)
+        multiplier = 2
+
         # Create the live plot on the main thread.
         plt.ion()  # Interactive mode on.
         fig, ax = plt.subplots()
@@ -400,15 +403,15 @@ class EyeGlucoseMonitor:
             # ---------------------------
             line_inst.set_data(self.time_history, self.instantaneous_history)
             line_avg.set_data(self.time_history, self.smoothed_history)
-            # Instead of ax.collections.clear(), remove each collection individually.
+            # Remove previous fill_between patches.
             for coll in ax.collections[:]:
                 coll.remove()
             if len(self.smoothed_history) > 0:
                 smoothed_array = np.array(self.smoothed_history)
                 # Compute standard deviation over the instantaneous predictions.
                 current_std = np.std(self.instantaneous_history)
-                upper_band = smoothed_array + current_std
-                lower_band = smoothed_array - current_std
+                upper_band = smoothed_array + multiplier * current_std
+                lower_band = smoothed_array - multiplier * current_std
                 ax.fill_between(self.time_history, lower_band, upper_band, color='gray', alpha=0.3)
             ax.relim()
             ax.autoscale_view()
@@ -428,7 +431,7 @@ class EyeGlucoseMonitor:
                 current_std = np.std(self.instantaneous_history)
             else:
                 current_std = 0.0
-            std_text = f"Band: ±{current_std:.1f} mg/dL"
+            std_text = f"Band: ±{multiplier * current_std:.1f} mg/dL"
             cv2.putText(frame, std_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
             
             cv2.imshow("Blood Glucose", frame)
