@@ -16,20 +16,20 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # -------------------------
 # Linear Model Coefficients
 # -------------------------
-INTERCEPT = 158.36230447500114
+INTERCEPT = 165.09878004119568
 COEFFICIENTS = {
-    "sclera_color_balance": -21.083841315095434,
-    "vein_pulsation_intensity": 7.070738290124303,
-    "scleral_vein_density": -2.9444267859551596,
-    "birefringence_index": -1.1990229731495423,
-    "pupil_response_time": -0.41394167175656627,
-    "ir_temperature": 0.24336454153819415,
-    "tear_film_reflectivity": 0.19610506090746777,
-    "vein_prominence": 0.16346548113619236,
-    "pupil_size": -0.12477161904738299,
-    "sclera_redness": -0.08409254746333485,
-    "pupil_dilation_rate": 0.0469442491233448,
-    "ir_intensity": 0.026267272816519388
+    "sclera_color_balance": -21.303704454497016,
+    "vein_pulsation_intensity": 6.982406072752957,
+    "scleral_vein_density": -3.3319972794297508,
+    "birefringence_index": -1.380000120925809,
+    "pupil_response_time": -0.26658746054692045,
+    "tear_film_reflectivity": 0.21038143405498175,
+    "ir_temperature": 0.20693937316627412,
+    "pupil_size": -0.10624279966311333,
+    "sclera_redness": -0.09156833893886906,
+    "pupil_dilation_rate": 0.05096604356696855,
+    "ir_intensity": 0.035737787232147794,
+    "vein_prominence": 0.0014616646309685809
 }
 
 # Expected order for features (must match training)
