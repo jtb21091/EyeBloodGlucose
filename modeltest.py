@@ -96,7 +96,7 @@ def get_ir_temperature(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     avg_intensity = np.mean(gray)
     temperature = (avg_intensity / 255.0) * 40 + 20  # Map to 20°C to 60°C
-    return round(temperature, 2)
+    return round(temperature, 14)
 
 def update_data():
     """Capture an eye image, compute indices, and update the CSV dataset."""
