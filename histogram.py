@@ -38,6 +38,9 @@ if "blood_glucose" in df.columns:
     median_value = blood_glucose.median()
     plt.axvline(median_value, color='blue', linestyle='-.', linewidth=2, label=f'Median: {median_value:.2f}')
     
+    # Set x-axis ticks to show bin edges
+    plt.xticks(bins, rotation=45)  # Rotate for better visibility
+    
     plt.title("Histogram of Blood Glucose with Bell Curve")
     plt.xlabel("Blood Glucose (mg/dL)")
     plt.ylabel("Frequency")  # Changed from Density to Frequency
