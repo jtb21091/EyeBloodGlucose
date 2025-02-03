@@ -1,0 +1,10 @@
+catboost
+opencv-python
+joblib
+lightgbm
+matplotlib
+numpy
+pandas
+scipy
+scikit-learn
+xgboost
