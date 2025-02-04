@@ -23,6 +23,7 @@ logs/
 # Ignore virtual environments
 venv/
 .env/
+myenv/
 
 ## Ignore training 
 *.pkl
