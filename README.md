@@ -5,9 +5,9 @@ https://github.com/jtb21091/Cherry/tree/main
 Best Model: Random Forest with R² Score: 0.55870
 2025-02-01 17:47:13,947 - INFO - Best model saved as: eye_glucose_model.pkl
 
-# python3 -m venv venv
-# source venv/bin/activate
-# pip install -r requirements.txt
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
 ## Steps
 
