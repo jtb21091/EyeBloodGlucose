@@ -9,3 +9,11 @@ scikit-learn
 xgboost
 seaborn
 statsmodels
+catboost        
+tensorflow      
+torch          
+keras          
+pillow        
+tqdm       
+pyyaml         
+h5py           
