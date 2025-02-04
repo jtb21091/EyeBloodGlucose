@@ -32,3 +32,4 @@ venv/
 .zshrc©
 *.zshrc©
 *.zshrc
+*.python-version
