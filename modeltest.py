@@ -18,10 +18,16 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
 
+def is_blurry(image, threshold=100.0):
+    """Check if the image is blurry using the variance of the Laplacian."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return variance < threshold, variance
+
 def get_pupil_size(image):
     """
     Detect and measure pupil size using adaptive thresholding and contour detection.
-    This function applies histogram equalization to improve contrast.
+    Histogram equalization is applied to improve contrast.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     # Improve contrast via histogram equalization
@@ -36,12 +42,12 @@ def get_pupil_size(image):
         return None  # No pupil detected
     largest_contour = max(contours, key=cv2.contourArea)
     (_, _), radius = cv2.minEnclosingCircle(largest_contour)
-    return round(radius * 2, 2)  # Return the pupil diameter
+    return round(radius * 2, 10)  # Return the pupil diameter with high precision
 
 def get_sclera_redness(image):
     """
     Analyze sclera redness using the HSV color space.
-    This updated function combines two ranges of red hues in HSV.
+    Combines two ranges of red hues in HSV.
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     # Lower red range
@@ -55,43 +61,45 @@ def get_sclera_redness(image):
     # Combine both masks
     mask = mask1 | mask2
     redness_score = np.mean(mask)  # Average red intensity across the ROI
-    return round(redness_score, 2)
+    return round(redness_score, 10)
 
 def get_vein_prominence(image):
     """Estimate vein prominence using edge detection and contrast enhancement."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    return round(np.mean(edges), 2)
+    # Adjusted Canny thresholds for potentially blurry images
+    edges = cv2.Canny(gray, 30, 100)
+    return round(np.mean(edges), 10)
 
 def get_ir_intensity(image):
-    """Calculate IR intensity from grayscale average."""
+    """Calculate IR intensity from the grayscale average."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return round(np.mean(gray), 2)
+    return round(np.mean(gray), 10)
 
 def get_scleral_vein_density(image):
     """Estimate scleral vein density using edge detection."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    return round(np.sum(edges) / edges.size, 2)
+    # Adjusted Canny thresholds for potentially blurry images
+    edges = cv2.Canny(gray, 30, 100)
+    return round(np.sum(edges) / edges.size, 10)
 
 def get_tear_film_reflectivity(image):
     """Estimate tear film reflectivity based on brightness variance."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return round(np.var(gray), 2)
+    return round(np.var(gray), 10)
 
 def get_pupil_dilation_rate(image):
     """Estimate pupil dilation based on area change in contours."""
     return get_pupil_size(image)  # Using pupil size as a proxy for dilation rate
 
 def get_sclera_color_balance(image):
-    """Analyze sclera color balance using RGB ratio."""
+    """Analyze sclera color balance using the RGB ratio."""
     mean_color = np.mean(image, axis=(0, 1))
-    return round(mean_color[2] / (mean_color[0] + 1e-5), 2)
+    return round(mean_color[2] / (mean_color[0] + 1e-5), 10)
 
 def get_vein_pulsation_intensity(image):
     """Estimate vein pulsation intensity using frequency analysis."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return round(np.std(gray), 2)
+    return round(np.std(gray), 10)
 
 def measure_pupil_response_time():
     """Track pupil size over multiple frames to estimate response time."""
@@ -112,22 +120,21 @@ def measure_pupil_response_time():
     cap.release()
     if len(pupil_sizes) < 2:
         return None  # Not enough data
-    response_time = round(time.time() - start_time, 2)
+    response_time = round(time.time() - start_time, 10)
     return response_time
 
 def capture_eye_image():
     """
     Capture an eye image from the webcam and extract the eye region (ROI)
-    using Mediapipe Face Mesh. A warm-up period is included to allow the camera's
-    auto-exposure to adjust.
+    using Mediapipe Face Mesh. Includes a warm-up period for auto-exposure and auto-focus.
     """
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         logging.error("Could not open webcam for eye capture.")
         return None, None
 
-    # Warm-up: Capture several frames for auto-exposure adjustment.
-    warmup_frames = 10
+    # Warm-up: Capture several frames for auto-exposure and auto-focus adjustment.
+    warmup_frames = 20  # Increased warmup frames
     frame = None
     for _ in range(warmup_frames):
         ret, temp_frame = cap.read()
@@ -140,6 +147,11 @@ def capture_eye_image():
     if frame is None:
         logging.error("Failed to capture frames for warmup.")
         return None, None
+
+    # Check if the captured frame is blurry.
+    blurry, variance = is_blurry(frame)
+    if blurry:
+        logging.warning("Captured image appears blurry (Laplacian variance: %.10f).", variance)
 
     # Warn if the frame is extremely dark.
     if np.mean(frame) < 10:
@@ -181,6 +193,11 @@ def capture_eye_image():
     if np.mean(roi) < 10:
         logging.warning("The ROI appears very dark. Check your lighting conditions.")
 
+    # Optionally, check if the ROI itself is blurry.
+    blurry_roi, variance_roi = is_blurry(roi)
+    if blurry_roi:
+        logging.warning("The extracted ROI appears blurry (Laplacian variance: %.10f).", variance_roi)
+
     # Save the ROI image with just the file name (not the full path) in the CSV.
     file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     file_path = os.path.join(IMAGE_DIR, file_name)
@@ -200,7 +217,7 @@ def get_birefringence_index(image):
         return 0.0
     std_intensity = np.std(gray)
     birefringence = std_intensity / mean_intensity
-    return round(birefringence, 2)
+    return round(birefringence, 10)
 
 def get_ir_temperature(image):
     """
@@ -211,10 +228,10 @@ def get_ir_temperature(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray)
     temperature = (mean_intensity / 255.0) * 40 + 20
-    return round(temperature, 2)
+    return round(temperature, 10)
 
 def update_data():
-    """Capture an eye image, compute real values, and update the dataset."""
+    """Capture an eye image, compute measurement values, and update the dataset."""
     filename, roi = capture_eye_image()
     if filename is None or roi is None:
         logging.error("No image captured. Skipping update.")
