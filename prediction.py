@@ -516,6 +516,31 @@ class EyeGlucoseMonitor:
                 smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
             cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+            
+            # ----- Added Warning Checks -----
+            # Check the instantaneous prediction first.
+            if self.latest_instantaneous_prediction is not None:
+                if self.latest_instantaneous_prediction < 40:
+                    warning_inst = "Instantaneous Low. Please check yourself."
+                    print(warning_inst)
+                    cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                elif self.latest_instantaneous_prediction > 400:
+                    warning_inst = "Instantaneous High. Please check yourself."
+                    print(warning_inst)
+                    cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+            # Now check the EMA (smoothed) prediction.
+            if self.latest_smoothed_prediction is not None:
+                if self.latest_smoothed_prediction < 40:
+                    warning_avg = "Average Low. Please check yourself."
+                    print(warning_avg)
+                    cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                elif self.latest_smoothed_prediction > 400:
+                    warning_avg = "Average High. Please check yourself."
+                    print(warning_avg)
+                    cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            # ----- End Added Warning Checks -----
+
             cv2.imshow("Blood Glucose", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
