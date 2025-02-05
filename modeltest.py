@@ -7,13 +7,18 @@ import mediapipe as mp  # type: ignore
 import time
 from datetime import datetime
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Setup logging: change level to DEBUG to see detailed logs.
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Define file paths and constants
 LABELS_FILE = "eye_glucose_data/labels.csv"
 IMAGE_DIR = "eye_glucose_data/images"
 os.makedirs(IMAGE_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(LABELS_FILE), exist_ok=True)  # Ensure CSV directory exists
+
+# Edge detection thresholds (tuned further)
+EDGE_LOW_THRESHOLD = 10
+EDGE_HIGH_THRESHOLD = 50
 
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
@@ -30,19 +35,17 @@ def get_pupil_size(image):
     Histogram equalization is applied to improve contrast.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Improve contrast via histogram equalization
     gray_eq = cv2.equalizeHist(gray)
-    # Apply adaptive thresholding
     adaptive_thresh = cv2.adaptiveThreshold(
         gray_eq, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, 11, 2)
     
     contours, _ = cv2.findContours(adaptive_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return None  # No pupil detected
+        return None
     largest_contour = max(contours, key=cv2.contourArea)
     (_, _), radius = cv2.minEnclosingCircle(largest_contour)
-    return round(radius * 2, 10)  # Return the pupil diameter with high precision
+    return round(radius * 2, 10)
 
 def get_sclera_redness(image):
     """
@@ -50,25 +53,24 @@ def get_sclera_redness(image):
     Combines two ranges of red hues in HSV.
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    # Lower red range
     lower_red1 = np.array([0, 50, 50])
     upper_red1 = np.array([10, 255, 255])
     mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    # Upper red range
     lower_red2 = np.array([170, 50, 50])
     upper_red2 = np.array([180, 255, 255])
     mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    # Combine both masks
     mask = mask1 | mask2
-    redness_score = np.mean(mask)  # Average red intensity across the ROI
+    redness_score = np.mean(mask)
     return round(redness_score, 10)
 
 def get_vein_prominence(image):
     """Estimate vein prominence using edge detection and contrast enhancement."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Adjusted Canny thresholds for potentially blurry images
-    edges = cv2.Canny(gray, 30, 100)
-    return round(np.mean(edges), 10)
+    # Use lowered thresholds to capture more subtle edges
+    edges = cv2.Canny(gray, EDGE_LOW_THRESHOLD, EDGE_HIGH_THRESHOLD)
+    mean_edges = np.mean(edges)
+    logging.debug("get_vein_prominence: Mean edge intensity = %.10f", mean_edges)
+    return round(mean_edges, 10)
 
 def get_ir_intensity(image):
     """Calculate IR intensity from the grayscale average."""
@@ -78,9 +80,11 @@ def get_ir_intensity(image):
 def get_scleral_vein_density(image):
     """Estimate scleral vein density using edge detection."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Adjusted Canny thresholds for potentially blurry images
-    edges = cv2.Canny(gray, 30, 100)
-    return round(np.sum(edges) / edges.size, 10)
+    edges = cv2.Canny(gray, EDGE_LOW_THRESHOLD, EDGE_HIGH_THRESHOLD)
+    sum_edges = np.sum(edges)
+    density = sum_edges / edges.size
+    logging.debug("get_scleral_vein_density: Sum of edges = %.10f, Density = %.10f", sum_edges, density)
+    return round(density, 10)
 
 def get_tear_film_reflectivity(image):
     """Estimate tear film reflectivity based on brightness variance."""
@@ -89,7 +93,7 @@ def get_tear_film_reflectivity(image):
 
 def get_pupil_dilation_rate(image):
     """Estimate pupil dilation based on area change in contours."""
-    return get_pupil_size(image)  # Using pupil size as a proxy for dilation rate
+    return get_pupil_size(image)
 
 def get_sclera_color_balance(image):
     """Analyze sclera color balance using the RGB ratio."""
@@ -116,10 +120,10 @@ def measure_pupil_response_time():
         pupil_size = get_pupil_size(frame)
         if pupil_size is not None:
             pupil_sizes.append(pupil_size)
-        time.sleep(0.1)  # 100ms delay between frames
+        time.sleep(0.1)
     cap.release()
     if len(pupil_sizes) < 2:
-        return None  # Not enough data
+        return None
     response_time = round(time.time() - start_time, 10)
     return response_time
 
@@ -133,7 +137,6 @@ def capture_eye_image():
         logging.error("Could not open webcam for eye capture.")
         return None, None
 
-    # Warm-up: Capture several frames for auto-exposure and auto-focus adjustment.
     warmup_frames = 20  # Increased warmup frames
     frame = None
     for _ in range(warmup_frames):
@@ -148,12 +151,10 @@ def capture_eye_image():
         logging.error("Failed to capture frames for warmup.")
         return None, None
 
-    # Check if the captured frame is blurry.
     blurry, variance = is_blurry(frame)
     if blurry:
         logging.warning("Captured image appears blurry (Laplacian variance: %.10f).", variance)
 
-    # Warn if the frame is extremely dark.
     if np.mean(frame) < 10:
         logging.warning("Captured frame is very dark. Check your lighting conditions.")
 
@@ -169,7 +170,6 @@ def capture_eye_image():
         else:
             face_landmarks = results.multi_face_landmarks[0]
             ih, iw, _ = frame.shape
-            # Extract left eye landmarks using Mediapipe's FACEMESH_LEFT_EYE connections.
             left_eye_indices = {idx for connection in mp_face_mesh.FACEMESH_LEFT_EYE for idx in connection}
             x_coords = []
             y_coords = []
@@ -193,12 +193,10 @@ def capture_eye_image():
     if np.mean(roi) < 10:
         logging.warning("The ROI appears very dark. Check your lighting conditions.")
 
-    # Optionally, check if the ROI itself is blurry.
     blurry_roi, variance_roi = is_blurry(roi)
     if blurry_roi:
         logging.warning("The extracted ROI appears blurry (Laplacian variance: %.10f).", variance_roi)
 
-    # Save the ROI image with just the file name (not the full path) in the CSV.
     file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     file_path = os.path.join(IMAGE_DIR, file_name)
     cv2.imwrite(file_path, roi)
@@ -209,7 +207,6 @@ def get_birefringence_index(image):
     """
     Calculate the birefringence index.
     This placeholder algorithm calculates the ratio of standard deviation to mean intensity.
-    Replace with the proper algorithm when available.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray)
@@ -223,7 +220,6 @@ def get_ir_temperature(image):
     """
     Estimate the IR temperature.
     This placeholder algorithm maps the average grayscale intensity to a temperature value.
-    Replace with the correct algorithm when available.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray)
@@ -258,18 +254,13 @@ def update_data():
         'birefringence_index'
     ])
 
-    if os.path.exists(LABELS_FILE):
-        df = pd.read_csv(LABELS_FILE)
-        if df.empty:
-            df = new_entry
-        else:
-            df = pd.concat([df, new_entry], ignore_index=True)
+    # Use append mode so that each run adds a new row
+    if not os.path.exists(LABELS_FILE):
+        new_entry.to_csv(LABELS_FILE, index=False, float_format='%.10f')
+        logging.info("CSV created and new data added: %s", filename)
     else:
-        df = new_entry
-
-    # Save the CSV with float formatting to 10 decimal points.
-    df.to_csv(LABELS_FILE, index=False, float_format='%.10f')
-    logging.info("New data added to CSV: %s", filename)
+        new_entry.to_csv(LABELS_FILE, mode='a', header=False, index=False, float_format='%.10f')
+        logging.info("Appended new data to CSV: %s", filename)
 
 if __name__ == "__main__":
     update_data()

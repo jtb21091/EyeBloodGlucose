@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 import logging
 import matplotlib.pyplot as plt
+import mediapipe as mp
 
 # Set logging to show warnings (and errors) only.
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -87,7 +88,6 @@ def get_vein_prominence(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 50, 150)
         prominence = np.sum(edges) / (255.0 * image.shape[0] * image.shape[1])
-        # Multiply by a scaling factor if needed.
         return round(prominence * 10, 5)
     except Exception as e:
         logging.error("Error in get_vein_prominence: " + str(e))
@@ -185,7 +185,7 @@ class EyeDetection:
     ir_intensity: float    # Mean intensity of the grayscale frame.
     timestamp: datetime
     is_valid: bool         # Whether a valid face was detected.
-    eyes_open: bool        # Whether the eyes are considered "open" (or forced open in dark conditions).
+    eyes_open: bool        # Whether the eyes are considered "open".
     face_rect: tuple = None  # The bounding box of the detected face (x, y, w, h)
 
 # ---------------------------
@@ -195,16 +195,17 @@ class EyeGlucoseMonitor:
     def __init__(self, model_path: str = "eye_glucose_model.pkl"):
         self.model_path = model_path
         self.model = self._load_model()
-        
-        # For improved detection consider using a DNN-based detector.
-        # For now, we continue with Haar cascades.
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+
+        # Initialize MediaPipe Face Mesh.
+        self.mp_face_mesh = mp.solutions.face_mesh
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
         )
-        self.eye_cascades = {
-            "left": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_lefteye_2splits.xml'),
-            "right": cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_righteye_2splits.xml')
-        }
+
         self.last_valid_detection_time = time.time()
         self.invalid_detection_threshold = 3.0  # Seconds without valid detection before clearing reading
         self.prediction_lock = threading.Lock()
@@ -246,39 +247,79 @@ class EyeGlucoseMonitor:
 
     def detect_face_and_eyes(self, frame: np.ndarray) -> EyeDetection:
         """
-        Detect the face and eyes using Haar cascades.
+        Detect the face and eyes using MediaPipe Face Mesh.
         Returns an EyeDetection dataclass instance.
         """
+        # Convert the frame from BGR to RGB for MediaPipe.
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.face_mesh.process(rgb_frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ir_intensity = np.mean(gray)
-        enhanced = cv2.equalizeHist(gray)
-        faces = self.face_cascade.detectMultiScale(enhanced, scaleFactor=1.1, minNeighbors=3, minSize=(60, 60))
-        
-        # Try a blurred image if no faces are found under low IR intensity.
-        if len(faces) == 0 and ir_intensity < self.MIN_IR_INTENSITY:
-            blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-            faces = self.face_cascade.detectMultiScale(blurred, scaleFactor=1.1, minNeighbors=2, minSize=(50, 50))
-        
         detection = EyeDetection([], [], ir_intensity, datetime.now(), False, False)
-        if len(faces) > 0:
-            # Choose the largest face.
-            face = max(faces, key=lambda r: r[2] * r[3])
-            x, y, w, h = face
-            detection.face_rect = face  # Save the face bounding box.
-            face_roi = enhanced[y:y+h, x:x+w]
-            left_eyes = self.eye_cascades["left"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
-            right_eyes = self.eye_cascades["right"].detectMultiScale(face_roi, scaleFactor=1.1, minNeighbors=2, minSize=(15, 15))
-            if ir_intensity < self.MIN_IR_INTENSITY:
-                detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, True, face)
+
+        if results.multi_face_landmarks:
+            face_landmarks = results.multi_face_landmarks[0]
+            h, w, _ = frame.shape
+            xs = [int(lm.x * w) for lm in face_landmarks.landmark]
+            ys = [int(lm.y * h) for lm in face_landmarks.landmark]
+            face_rect = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+            detection.face_rect = face_rect
+            detection.is_valid = True
+
+            # Define landmark indices for the left and right eyes.
+            # (These indices are suggested values; adjust if needed.)
+            left_eye_indices = [33, 133, 160, 159, 158, 157, 173, 246]
+            right_eye_indices = [362, 263, 387, 386, 385, 384, 398]
+
+            left_eye_points = []
+            right_eye_points = []
+            for i in left_eye_indices:
+                if i < len(face_landmarks.landmark):
+                    x = int(face_landmarks.landmark[i].x * w)
+                    y = int(face_landmarks.landmark[i].y * h)
+                    left_eye_points.append((x, y))
+            for i in right_eye_indices:
+                if i < len(face_landmarks.landmark):
+                    x = int(face_landmarks.landmark[i].x * w)
+                    y = int(face_landmarks.landmark[i].y * h)
+                    right_eye_points.append((x, y))
+
+            # Compute bounding boxes for each eye (if landmarks are found).
+            if left_eye_points:
+                lx = min(pt[0] for pt in left_eye_points)
+                ly = min(pt[1] for pt in left_eye_points)
+                rx = max(pt[0] for pt in left_eye_points)
+                ry = max(pt[1] for pt in left_eye_points)
+                left_eye_box = (lx, ly, rx - lx, ry - ly)
             else:
-                if len(left_eyes) > 0 or len(right_eyes) > 0:
-                    ear_list = []
-                    for (ex, ey, ew, eh) in (list(left_eyes) + list(right_eyes)):
-                        ratio = eh / ew if ew > 0 else 0
-                        ear_list.append(ratio)
-                    avg_ear = np.mean(ear_list) if ear_list else 0
-                    eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
-                    detection = EyeDetection(left_eyes, right_eyes, ir_intensity, datetime.now(), True, eyes_open, face)
+                left_eye_box = None
+
+            if right_eye_points:
+                lx = min(pt[0] for pt in right_eye_points)
+                ly = min(pt[1] for pt in right_eye_points)
+                rx = max(pt[0] for pt in right_eye_points)
+                ry = max(pt[1] for pt in right_eye_points)
+                right_eye_box = (lx, ly, rx - lx, ry - ly)
+            else:
+                right_eye_box = None
+
+            detection.left_eye = [left_eye_box] if left_eye_box else []
+            detection.right_eye = [right_eye_box] if right_eye_box else []
+
+            # Determine if eyes are open based on the aspect ratio (height/width) of each eye box.
+            ear_list = []
+            if left_eye_box:
+                _, _, ew, eh = left_eye_box
+                ear_list.append(eh / ew if ew > 0 else 0)
+            if right_eye_box:
+                _, _, ew, eh = right_eye_box
+                ear_list.append(eh / ew if ew > 0 else 0)
+            if ear_list:
+                avg_ear = np.mean(ear_list)
+                detection.eyes_open = avg_ear > self.MIN_EYE_ASPECT_RATIO
+            else:
+                detection.eyes_open = False
+
         return detection
 
     def update_pupil_history(self, pupil_size: float):
@@ -326,36 +367,26 @@ class EyeGlucoseMonitor:
             logging.warning("No face rectangle detected.")
             return {}
 
-        fx, fy, fw, fh = detection.face_rect
-        face_roi = frame[fy:fy+fh, fx:fx+fw]
-
-        # Create a union of detected eye boxes (relative to face ROI)
+        # Use the union of the detected eye boxes (in absolute coordinates) to define the eye region.
         eye_boxes = []
-        for (ex, ey, ew, eh) in detection.left_eye:
-            eye_boxes.append((ex, ey, ex+ew, ey+eh))
-        for (ex, ey, ew, eh) in detection.right_eye:
-            eye_boxes.append((ex, ey, ex+ew, ey+eh))
+        for box in detection.left_eye:
+            if box is not None:
+                eye_boxes.append(box)  # Each box is (x, y, w, h)
+        for box in detection.right_eye:
+            if box is not None:
+                eye_boxes.append(box)
         if not eye_boxes:
             logging.warning("No eye boxes found.")
             return {}
         ex_min = min(box[0] for box in eye_boxes)
         ey_min = min(box[1] for box in eye_boxes)
-        ex_max = max(box[2] for box in eye_boxes)
-        ey_max = max(box[3] for box in eye_boxes)
-        # Convert from face ROI coordinates to full frame coordinates.
-        eye_roi_x = fx + ex_min
-        eye_roi_y = fy + ey_min
-        eye_roi_w = ex_max - ex_min
-        eye_roi_h = ey_max - ey_min
-
-        # Crop the eye region.
-        eye_roi = frame[eye_roi_y:eye_roi_y+eye_roi_h, eye_roi_x:eye_roi_x+eye_roi_w]
+        ex_max = max(box[0] + box[2] for box in eye_boxes)
+        ey_max = max(box[1] + box[3] for box in eye_boxes)
+        eye_roi = frame[ey_min:ey_max, ex_min:ex_max]
 
         # --- Temporal Measurements ---
-        # Compute the current pupil size and update the history.
         pupil_size = get_pupil_size(eye_roi)
         self.update_pupil_history(pupil_size)
-        # Compute temporal features using the history.
         pupil_dilation_rate = self.compute_pupil_dilation_rate()
         pupil_response_time = self.compute_pupil_response_time()
 
@@ -373,7 +404,6 @@ class EyeGlucoseMonitor:
             "vein_pulsation_intensity": get_vein_pulsation_intensity(eye_roi),
             "birefringence_index": get_birefringence_index(eye_roi)
         }
-        # Enforce the order expected by the model.
         ordered_features = {key: features.get(key, 0) for key in FEATURES_ORDER}
         logging.debug("Extracted features: " + str(ordered_features))
         self.last_features = ordered_features
@@ -455,14 +485,18 @@ class EyeGlucoseMonitor:
                 self.instantaneous_history.append(inst_pred)
                 self.smoothed_history.append(smooth_pred)
 
-                # Draw the detected face rectangle (blue) and eye boxes.
+                # Draw the detected face rectangle and eye boxes.
                 if detection.face_rect is not None:
-                    (x, y, w, h) = detection.face_rect
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-                    for (ex, ey, ew, eh) in detection.left_eye:
-                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 255, 0), 2)
-                    for (ex, ey, ew, eh) in detection.right_eye:
-                        cv2.rectangle(frame, (x + ex, y + ey), (x + ex + ew, y + ey + eh), (0, 0, 255), 2)
+                    (x, y, w_box, h_box) = detection.face_rect
+                    cv2.rectangle(frame, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
+                for box in detection.left_eye:
+                    if box is not None:
+                        (ex, ey, ew, eh) = box
+                        cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
+                for box in detection.right_eye:
+                    if box is not None:
+                        (ex, ey, ew, eh) = box
+                        cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 0, 255), 2)
             else:
                 with self.prediction_lock:
                     self.latest_smoothed_prediction = None
