@@ -1,16 +1,19 @@
 Metric,Value,CGM Benchmark
-Best Model Name,CatBoost,
+Best Model Name,Gradient Boosting,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 <catboost.core.CatBoostRegressor object at 0x16adaa9f0>)])",
+                 GradientBoostingRegressor(learning_rate=0.010156113098594747,
+                                           max_depth=11, n_estimators=358,
+                                           subsample=0.6027808522124762))])",
 Best Model Hyperparameters,,
-  regressor__depth,5,
-  regressor__iterations,403,
-  regressor__learning_rate,0.26399834267149175,
-R²,0.6201062993680138,0.94
-MSE,194.44687986203394,6.2
-MAE,8.879507838024068,2.1
-MARD,7.0504727971778065,10.5
-Sigma Level,1.0234542804874172,3.0
+  regressor__learning_rate,0.010156113098594747,
+  regressor__max_depth,11,
+  regressor__n_estimators,358,
+  regressor__subsample,0.6027808522124762,
+R²,0.7884604299195219,0.94
+MSE,114.67299246621984,6.2
+MAE,7.040551283094077,2.1
+MARD,5.443312466012405,10.5
+Sigma Level,1.3767049910630478,3.0
