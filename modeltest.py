@@ -39,12 +39,22 @@ def get_pupil_size(image):
     return round(radius * 2, 2)  # Return the pupil diameter
 
 def get_sclera_redness(image):
-    """Analyze sclera redness using the HSV color space."""
+    """
+    Analyze sclera redness using the HSV color space.
+    This updated function combines two ranges of red hues in HSV.
+    """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_red = np.array([0, 50, 50])
-    upper_red = np.array([10, 255, 255])
-    mask = cv2.inRange(hsv, lower_red, upper_red)
-    redness_score = np.mean(mask)
+    # Lower red range
+    lower_red1 = np.array([0, 50, 50])
+    upper_red1 = np.array([10, 255, 255])
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    # Upper red range
+    lower_red2 = np.array([170, 50, 50])
+    upper_red2 = np.array([180, 255, 255])
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    # Combine both masks
+    mask = mask1 | mask2
+    redness_score = np.mean(mask)  # Average red intensity across the ROI
     return round(redness_score, 2)
 
 def get_vein_prominence(image):
