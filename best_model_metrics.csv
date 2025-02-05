@@ -1,19 +1,16 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Gradient Boosting,
+Best Model Name,SVR,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 GradientBoostingRegressor(learning_rate=0.08186856720009172,
-                                           max_depth=4, n_estimators=152,
-                                           subsample=0.7957811041110252))])",
+                 SVR(C=5.967511656638482, epsilon=0.975255307264138))])",
 Best Model Hyperparameters,,
-  regressor__learning_rate,0.08186856720009172,
-  regressor__max_depth,4,
-  regressor__n_estimators,152,
-  regressor__subsample,0.7957811041110252,
-R²,0.5389603621098313,0.94
-MSE,77.25046167887032,6.2
-MAE,5.640969500294238,2.1
-MARD,3.628190481354693,10.5
-Sigma Level,1.7047674357894234,3.0
+  regressor__C,5.967511656638482,
+  regressor__epsilon,0.975255307264138,
+  regressor__kernel,rbf,
+R²,0.3414301209056393,0.94
+MSE,112.04946750160559,6.2
+MAE,8.393007595748443,2.1
+MARD,6.5946418029372085,10.5
+Sigma Level,1.2688447818771256,3.0
