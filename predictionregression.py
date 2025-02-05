@@ -17,20 +17,20 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # Linear Model Coefficients
 # -------------------------
 # These coefficients come from your table.
-INTERCEPT = 158.36230447500114
+INTERCEPT = 100.0
 COEFFICIENTS = {
-    "sclera_color_balance": -21.083841315095434,
-    "vein_pulsation_intensity": 7.070738290124303,
-    "scleral_vein_density": -2.9444267859551596,
-    "birefringence_index": -1.1990229731495423,
-    "pupil_response_time": -0.41394167175656627,
-    "ir_temperature": 0.24336454153819415,
-    "tear_film_reflectivity": 0.19610506090746777,
-    "vein_prominence": 0.16346548113619236,
-    "pupil_size": -0.12477161904738299,
-    "sclera_redness": -0.08409254746333485,
-    "pupil_dilation_rate": 0.0469442491233448,
-    "ir_intensity": 0.026267272816519388
+    "vein_pulsation_intensity": 26.916957662676726,
+    "sclera_color_balance": -6.907428129024707,
+    "pupil_response_time": 4.3025788705393335,
+    "scleral_vein_density": 1.8445358528132125,
+    "birefringence_index": -1.4465414007465307,
+    "vein_prominence": 0.23476660160393026,
+    "ir_temperature": 0.16994037409188242,
+    "tear_film_reflectivity": 0.12123172367583383,
+    "pupil_size": -0.06012419104913796,
+    "sclera_redness": -0.05107961598626965,
+    "pupil_dilation_rate": 0.011998298005915363,
+    "ir_intensity": 0.007247279344851364
 }
 
 # Define the expected feature order (must match training, ignoring the intercept)
