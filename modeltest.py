@@ -19,15 +19,24 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 mp_face_mesh = mp.solutions.face_mesh
 
 def get_pupil_size(image):
-    """Detect and measure pupil size using thresholding and contour detection."""
+    """
+    Detect and measure pupil size using adaptive thresholding and contour detection.
+    This function applies histogram equalization to improve contrast.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, threshold = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY_INV)
-    contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Improve contrast via histogram equalization
+    gray_eq = cv2.equalizeHist(gray)
+    # Apply adaptive thresholding
+    adaptive_thresh = cv2.adaptiveThreshold(
+        gray_eq, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 11, 2)
+    
+    contours, _ = cv2.findContours(adaptive_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None  # No pupil detected
     largest_contour = max(contours, key=cv2.contourArea)
     (_, _), radius = cv2.minEnclosingCircle(largest_contour)
-    return round(radius * 2, 2)  # Convert radius to diameter
+    return round(radius * 2, 2)  # Return the pupil diameter
 
 def get_sclera_redness(image):
     """Analyze sclera redness using the HSV color space."""
@@ -35,7 +44,7 @@ def get_sclera_redness(image):
     lower_red = np.array([0, 50, 50])
     upper_red = np.array([10, 255, 255])
     mask = cv2.inRange(hsv, lower_red, upper_red)
-    redness_score = np.mean(mask)  # Get average red intensity
+    redness_score = np.mean(mask)
     return round(redness_score, 2)
 
 def get_vein_prominence(image):
@@ -67,7 +76,7 @@ def get_pupil_dilation_rate(image):
 def get_sclera_color_balance(image):
     """Analyze sclera color balance using RGB ratio."""
     mean_color = np.mean(image, axis=(0, 1))
-    return round(mean_color[2] / (mean_color[0] + 1e-5), 2)  # Red/Blue ratio
+    return round(mean_color[2] / (mean_color[0] + 1e-5), 2)
 
 def get_vein_pulsation_intensity(image):
     """Estimate vein pulsation intensity using frequency analysis."""
@@ -82,12 +91,12 @@ def measure_pupil_response_time():
         return None
     pupil_sizes = []
     start_time = time.time()
-    for _ in range(10):  # Capture 10 frames
+    for _ in range(10):
         ret, frame = cap.read()
         if not ret:
             continue
         pupil_size = get_pupil_size(frame)
-        if pupil_size:
+        if pupil_size is not None:
             pupil_sizes.append(pupil_size)
         time.sleep(0.1)  # 100ms delay between frames
     cap.release()
@@ -107,7 +116,7 @@ def capture_eye_image():
         logging.error("Could not open webcam for eye capture.")
         return None, None
 
-    # Warm-up: Capture several frames so that the camera can adjust exposure.
+    # Warm-up: Capture several frames for auto-exposure adjustment.
     warmup_frames = 10
     frame = None
     for _ in range(warmup_frames):
@@ -122,28 +131,23 @@ def capture_eye_image():
         logging.error("Failed to capture frames for warmup.")
         return None, None
 
-    # Check if the frame is extremely dark.
+    # Warn if the frame is extremely dark.
     if np.mean(frame) < 10:
         logging.warning("Captured frame is very dark. Check your lighting conditions.")
 
-    # Convert the frame to RGB for Mediapipe processing.
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    # Process the image with Mediapipe Face Mesh to detect facial landmarks.
     with mp_face_mesh.FaceMesh(static_image_mode=True,
                                max_num_faces=1,
                                refine_landmarks=True,
                                min_detection_confidence=0.5) as face_mesh:
         results = face_mesh.process(rgb_frame)
-
         if not results.multi_face_landmarks:
             logging.error("No face landmarks detected. Using full frame as ROI.")
             roi = frame
         else:
             face_landmarks = results.multi_face_landmarks[0]
             ih, iw, _ = frame.shape
-
-            # Use Mediapipe's FACEMESH_LEFT_EYE connections to extract left eye landmarks.
+            # Extract left eye landmarks using Mediapipe's FACEMESH_LEFT_EYE connections.
             left_eye_indices = {idx for connection in mp_face_mesh.FACEMESH_LEFT_EYE for idx in connection}
             x_coords = []
             y_coords = []
@@ -151,7 +155,6 @@ def capture_eye_image():
                 lm = face_landmarks.landmark[idx]
                 x_coords.append(int(lm.x * iw))
                 y_coords.append(int(lm.y * ih))
-
             if x_coords and y_coords:
                 x_min = max(min(x_coords) - 5, 0)
                 x_max = min(max(x_coords) + 5, iw)
@@ -165,12 +168,10 @@ def capture_eye_image():
                 logging.error("No eye landmarks found. Using full frame as ROI.")
                 roi = frame
 
-    # Check if the ROI is extremely dark.
     if np.mean(roi) < 10:
         logging.warning("The ROI appears very dark. Check your lighting conditions.")
 
-    # Save the ROI image to disk.
-    # Only the file name (not the full path) will be saved in the CSV.
+    # Save the ROI image with just the file name (not the full path) in the CSV.
     file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     file_path = os.path.join(IMAGE_DIR, file_name)
     cv2.imwrite(file_path, roi)
@@ -180,7 +181,7 @@ def capture_eye_image():
 def get_birefringence_index(image):
     """
     Calculate the birefringence index.
-    This is a placeholder algorithm that calculates the ratio of standard deviation to mean intensity.
+    This placeholder algorithm calculates the ratio of standard deviation to mean intensity.
     Replace with the proper algorithm when available.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -194,12 +195,11 @@ def get_birefringence_index(image):
 def get_ir_temperature(image):
     """
     Estimate the IR temperature.
-    This is a placeholder algorithm. It maps the average grayscale intensity to a temperature value.
+    This placeholder algorithm maps the average grayscale intensity to a temperature value.
     Replace with the correct algorithm when available.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray)
-    # Example conversion: map intensity (0-255) to temperature range (20-60 Celsius)
     temperature = (mean_intensity / 255.0) * 40 + 20
     return round(temperature, 2)
 
@@ -217,7 +217,6 @@ def update_data():
     birefringence_index = get_birefringence_index(roi)
     ir_temperature = get_ir_temperature(roi)
 
-    # Create a new entry DataFrame with the computed values.
     new_entry = pd.DataFrame([[
         filename, "", pupil_size, sclera_redness, vein_prominence, pupil_response_time,
         get_ir_intensity(roi), get_scleral_vein_density(roi), ir_temperature,
@@ -232,7 +231,6 @@ def update_data():
         'birefringence_index'
     ])
 
-    # Load existing data if the CSV file exists; otherwise, use new_entry.
     if os.path.exists(LABELS_FILE):
         df = pd.read_csv(LABELS_FILE)
         if df.empty:
@@ -242,7 +240,7 @@ def update_data():
     else:
         df = new_entry
 
-    # Save CSV with float formatting to 10 decimal points.
+    # Save the CSV with float formatting to 10 decimal points.
     df.to_csv(LABELS_FILE, index=False, float_format='%.10f')
     logging.info("New data added to CSV: %s", filename)
 
