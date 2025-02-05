@@ -110,7 +110,7 @@ def capture_eye_image():
     # Warm-up: Capture several frames so that the camera can adjust exposure.
     warmup_frames = 10
     frame = None
-    for i in range(warmup_frames):
+    for _ in range(warmup_frames):
         ret, temp_frame = cap.read()
         if not ret:
             continue
@@ -145,7 +145,6 @@ def capture_eye_image():
 
             # Use Mediapipe's FACEMESH_LEFT_EYE connections to extract left eye landmarks.
             left_eye_indices = {idx for connection in mp_face_mesh.FACEMESH_LEFT_EYE for idx in connection}
-
             x_coords = []
             y_coords = []
             for idx in left_eye_indices:
@@ -170,11 +169,13 @@ def capture_eye_image():
     if np.mean(roi) < 10:
         logging.warning("The ROI appears very dark. Check your lighting conditions.")
 
-    # Save the ROI image to disk
-    filename = os.path.join(IMAGE_DIR, f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-    cv2.imwrite(filename, roi)
-    logging.info("Captured eye ROI image: %s", filename)
-    return filename, roi
+    # Save the ROI image to disk.
+    # Only the file name (not the full path) will be saved in the CSV.
+    file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    file_path = os.path.join(IMAGE_DIR, file_name)
+    cv2.imwrite(file_path, roi)
+    logging.info("Captured eye ROI image: %s", file_name)
+    return file_name, roi
 
 def get_birefringence_index(image):
     """
@@ -216,7 +217,7 @@ def update_data():
     birefringence_index = get_birefringence_index(roi)
     ir_temperature = get_ir_temperature(roi)
 
-    # Create a new entry DataFrame with the computed values
+    # Create a new entry DataFrame with the computed values.
     new_entry = pd.DataFrame([[
         filename, "", pupil_size, sclera_redness, vein_prominence, pupil_response_time,
         get_ir_intensity(roi), get_scleral_vein_density(roi), ir_temperature,
@@ -231,14 +232,18 @@ def update_data():
         'birefringence_index'
     ])
 
-    # Load existing data if the CSV file exists, otherwise create a new DataFrame
+    # Load existing data if the CSV file exists; otherwise, use new_entry.
     if os.path.exists(LABELS_FILE):
         df = pd.read_csv(LABELS_FILE)
-        df = pd.concat([df, new_entry], ignore_index=True)
+        if df.empty:
+            df = new_entry
+        else:
+            df = pd.concat([df, new_entry], ignore_index=True)
     else:
         df = new_entry
 
-    df.to_csv(LABELS_FILE, index=False)
+    # Save CSV with float formatting to 10 decimal points.
+    df.to_csv(LABELS_FILE, index=False, float_format='%.10f')
     logging.info("New data added to CSV: %s", filename)
 
 if __name__ == "__main__":
