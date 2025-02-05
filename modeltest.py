@@ -99,21 +99,34 @@ def measure_pupil_response_time():
 def capture_eye_image():
     """
     Capture an eye image from the webcam and extract the eye region (ROI)
-    using Mediapipe Face Mesh.
+    using Mediapipe Face Mesh. A warm-up period is included to allow the camera's
+    auto-exposure to adjust.
     """
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         logging.error("Could not open webcam for eye capture.")
         return None, None
 
-    ret, frame = cap.read()
+    # Warm-up: Capture several frames so that the camera can adjust exposure.
+    warmup_frames = 10
+    frame = None
+    for i in range(warmup_frames):
+        ret, temp_frame = cap.read()
+        if not ret:
+            continue
+        frame = temp_frame
+        time.sleep(0.1)
     cap.release()
 
-    if not ret:
-        logging.error("Failed to capture eye image.")
+    if frame is None:
+        logging.error("Failed to capture frames for warmup.")
         return None, None
 
-    # Convert the frame to RGB for Mediapipe processing
+    # Check if the frame is extremely dark.
+    if np.mean(frame) < 10:
+        logging.warning("Captured frame is very dark. Check your lighting conditions.")
+
+    # Convert the frame to RGB for Mediapipe processing.
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     # Process the image with Mediapipe Face Mesh to detect facial landmarks.
@@ -153,7 +166,7 @@ def capture_eye_image():
                 logging.error("No eye landmarks found. Using full frame as ROI.")
                 roi = frame
 
-    # Optionally, check if the ROI is extremely dark and log a warning.
+    # Check if the ROI is extremely dark.
     if np.mean(roi) < 10:
         logging.warning("The ROI appears very dark. Check your lighting conditions.")
 
