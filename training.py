@@ -1,37 +1,37 @@
 import os
-import pandas as pd
+import pandas as pd # type: ignore
 import numpy as np
-import joblib
-import matplotlib.pyplot as plt
+import joblib # type: ignore
+import matplotlib.pyplot as plt # type: ignore # type: ignore
 import logging
 import warnings
-from sklearn.exceptions import ConvergenceWarning
+from sklearn.exceptions import ConvergenceWarning # type: ignore
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import LinearRegression
-from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures
-from sklearn.pipeline import Pipeline
-from scipy.stats import uniform, randint
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold # type: ignore
+from sklearn.linear_model import LinearRegression # type: ignore
+from sklearn.svm import SVR # type: ignore
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor # type: ignore
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error # type: ignore
+from sklearn.impute import SimpleImputer # type: ignore # type: ignore
+from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures # type: ignore # type: ignore
+from sklearn.pipeline import Pipeline # type: ignore
+from scipy.stats import uniform, randint # type: ignore
 
 # Import neural network regressor
-from sklearn.neural_network import MLPRegressor
+from sklearn.neural_network import MLPRegressor # type: ignore
 
 # Import for ensemble models if installed.
 try:
-    from xgboost import XGBRegressor
+    from xgboost import XGBRegressor # type: ignore
 except ImportError:
     XGBRegressor = None
 try:
-    from lightgbm import LGBMRegressor
+    from lightgbm import LGBMRegressor # type: ignore
 except ImportError:
     LGBMRegressor = None
 try:
-    from catboost import CatBoostRegressor
+    from catboost import CatBoostRegressor # type: ignore
 except ImportError:
     CatBoostRegressor = None
 
@@ -71,10 +71,10 @@ class EyeGlucoseModel:
         if "blood_glucose" in numeric_cols:
             numeric_cols.remove("blood_glucose")
         z_scores = np.abs((df_clean[numeric_cols] - df_clean[numeric_cols].mean()) / df_clean[numeric_cols].std())
-        outliers_z = (z_scores > 6).any(axis=1)
+        outliers_z = (z_scores > 2).any(axis=1)
         df_clean = df_clean[~outliers_z].copy()
         removed_count = len(df) - len(df_clean)
-        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 6) in at least one non-blood_glucose variable")
+        logging.info(f"Removed {removed_count} rows due to outliers (Z-score > 2) in at least one non-blood_glucose variable")
         return df_clean
 
     def prepare_data(self):
