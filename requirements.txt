@@ -16,4 +16,5 @@ keras
 pillow        
 tqdm       
 pyyaml         
-h5py           
+h5py    
+mediapipe       
