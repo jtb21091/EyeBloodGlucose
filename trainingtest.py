@@ -4,6 +4,9 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 import logging
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
 from sklearn.linear_model import LinearRegression
@@ -52,7 +55,6 @@ def compute_sigma_level(y_true, y_pred, TEa=15):
         return float('inf')
     return (TEa - np.abs(bias)) / sd
 
-
 #########################################
 # Main Model Training Class
 #########################################
@@ -62,8 +64,6 @@ class EyeGlucoseModel:
         self.labels_file = labels_file
         self.model_file = model_file
         self.best_model = None
-        # Default calibration bias is zero; once computed, it will be used to adjust predictions.
-        self.calibration_bias = 0.0
 
     def remove_outliers(self, df):
         df_clean = df.copy()
@@ -115,6 +115,12 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
+        In this trimmed version we keep:
+          - SVR
+          - Random Forest
+          - Gradient Boosting
+          - Neural Network (MLPRegressor)
+          - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
         """
         models = {
             "SVR": {
@@ -140,11 +146,16 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
+                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
                     "subsample": uniform(0.6, 0.4)
                 }
             },
             "Neural Network": {
-                "model": MLPRegressor(max_iter=100, early_stopping=False, random_state=42),
+                # NOTE: If you receive convergence warnings for the MLPRegressor,
+                # consider enabling early_stopping (set early_stopping=True),
+                # increasing max_iter beyond 1000, or fine-tuning learning_rate_init,
+                # hidden_layer_sizes, and activation functions.
+                "model": MLPRegressor(max_iter=5000, early_stopping=True, random_state=42),
                 "params": {
                     "hidden_layer_sizes": [(64, 32), (128, 64), (64, 64, 32)],
                     "activation": ["relu", "tanh"],
@@ -168,7 +179,8 @@ class EyeGlucoseModel:
             }
         if LGBMRegressor is not None:
             models["LightGBM"] = {
-                "model": LGBMRegressor(random_state=42),
+                # Added verbosity=-1 to suppress LightGBM warnings.
+                "model": LGBMRegressor(random_state=42, verbosity=-1),
                 "params": {
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
@@ -213,7 +225,16 @@ class EyeGlucoseModel:
     def save_metrics_to_csv(self, best_model_name, metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv"):
         """
         Saves the best model details and performance metrics to a CSV file.
+        
+        Parameters:
+            best_model_name (str): Name of the best model.
+            metrics (dict): A dictionary containing performance metrics (e.g., R2, MSE, MAE, MARD, Sigma).
+            cgm_benchmarks (dict): A dictionary containing benchmark values for each metric.
+            best_model_details (str): String representation of the best model.
+            best_model_params (dict): Best hyperparameters of the best model.
+            filename (str): The name of the CSV file to save.
         """
+        # Create a list of dictionaries (rows) to store the details
         rows = [
             {"Metric": "Best Model Name", "Value": best_model_name, "CGM Benchmark": ""},
             {"Metric": "Best Model Details", "Value": best_model_details, "CGM Benchmark": ""}
@@ -231,29 +252,10 @@ class EyeGlucoseModel:
         rows.append({"Metric": "MARD", "Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks.get("MARD", "")})
         rows.append({"Metric": "Sigma Level", "Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks.get("Sigma Level", "")})
         
+        # Convert the rows into a DataFrame and save as CSV
         df = pd.DataFrame(rows)
         df.to_csv(filename, index=False)
         logging.info(f"Best model metrics and details saved to: {filename}")
-
-    def calibrate_best_model(self, X_cal, y_cal):
-        """
-        Compute calibration bias using a calibration dataset (typically the validation set).
-        This bias is then subtracted from future predictions.
-        """
-        raw_predictions = self.best_model.predict(X_cal)
-        calibration_bias = np.mean(raw_predictions - y_cal)
-        self.calibration_bias = calibration_bias
-        logging.info(f"Calibration bias computed: {calibration_bias:.5f}")
-        return calibration_bias
-
-    def predict(self, X):
-        """
-        Predict blood glucose values using the best model with calibration adjustment.
-        """
-        if self.best_model is None:
-            raise ValueError("No model has been trained yet.")
-        raw_predictions = self.best_model.predict(X)
-        return raw_predictions - self.calibration_bias
 
     def train_model(self):
         X, y = self.prepare_data()
@@ -325,7 +327,7 @@ class EyeGlucoseModel:
             plt.show()
             self.plot_learning_curve(search.best_estimator_, X_train, y_train, name)
             
-            if r2 > best_score:
+            if best_mse is None or mse < best_mse:
                 best_score = r2
                 best_estimator = search.best_estimator_
                 best_model_name = name
@@ -338,25 +340,6 @@ class EyeGlucoseModel:
 
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.best_model = best_estimator
-
-        # --- Calibration Step ---
-        # Compute the bias on the validation set and subtract it from predictions.
-        calibration_bias = self.calibrate_best_model(X_val, y_val)
-        y_pred_calibrated = self.best_model.predict(X_val) - calibration_bias
-        
-        r2_calibrated = r2_score(y_val, y_pred_calibrated)
-        mse_calibrated = mean_squared_error(y_val, y_pred_calibrated)
-        mae_calibrated = mean_absolute_error(y_val, y_pred_calibrated)
-        mard_calibrated = compute_mard(y_val.values, y_pred_calibrated)
-        sigma_calibrated = compute_sigma_level(y_val.values, y_pred_calibrated, TEa=15)
-
-        logging.info("Metrics after calibration adjustment:")
-        logging.info(f"  R² Score: {r2_calibrated:.5f}")
-        logging.info(f"  MSE: {mse_calibrated:.5f}")
-        logging.info(f"  MAE: {mae_calibrated:.5f}")
-        logging.info(f"  MARD: {mard_calibrated:.5f}%")
-        logging.info(f"  Sigma Level: {sigma_calibrated:.5f}")
-
         self.save_model()
 
         cgm_benchmarks = {
@@ -368,11 +351,11 @@ class EyeGlucoseModel:
         }
 
         best_metrics = {
-            "R2": r2_calibrated,
-            "MSE": mse_calibrated,
-            "MAE": mae_calibrated,
-            "MARD": mard_calibrated,
-            "Sigma": sigma_calibrated
+            "R2": best_r2,
+            "MSE": best_mse,
+            "MAE": best_mae,
+            "MARD": best_mard,
+            "Sigma": best_sigma
         }
         best_model_details = str(best_estimator)
         self.save_metrics_to_csv(best_model_name, best_metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv")
@@ -380,13 +363,8 @@ class EyeGlucoseModel:
     def save_model(self):
         if self.best_model is None:
             raise ValueError("No model has been trained yet.")
-        # Save both the best model and the calibration bias as a dictionary.
-        model_data = {
-            "model": self.best_model,
-            "calibration_bias": self.calibration_bias
-        }
-        joblib.dump(model_data, self.model_file)
-        logging.info(f"Best model (with calibration bias) saved as: {self.model_file}")
+        joblib.dump(self.best_model, self.model_file)
+        logging.info(f"Best model saved as: {self.model_file}")
 
 if __name__ == "__main__":
     model_trainer = EyeGlucoseModel()

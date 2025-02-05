@@ -4,6 +4,9 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 import logging
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
 from sklearn.linear_model import LinearRegression

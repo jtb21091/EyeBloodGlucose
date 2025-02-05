@@ -34,3 +34,5 @@ myenv/
 *.zshrc©
 *.zshrc
 *.python-version
+
+catboost_info
