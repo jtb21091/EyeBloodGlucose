@@ -111,6 +111,13 @@ def measure_pupil_response_time():
     if not cap.isOpened():
         logging.error("Could not open webcam.")
         return None
+
+    # Set the resolution to 1920x1080
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    logging.debug("measure_pupil_response_time: Camera resolution set to: %.0f x %.0f",
+                  cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
     pupil_sizes = []
     start_time = time.time()
     for _ in range(10):
@@ -137,6 +144,12 @@ def capture_eye_image():
         logging.error("Could not open webcam for eye capture.")
         return None, None
 
+    # Set the resolution to 1920x1080
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    logging.debug("capture_eye_image: Camera resolution set to: %.0f x %.0f",
+                  cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
     warmup_frames = 20  # Increased warmup frames
     frame = None
     for _ in range(warmup_frames):

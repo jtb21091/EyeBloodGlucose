@@ -1,8 +1,8 @@
 import os
 import cv2
-import pandas as pd
+import pandas as pd # type: ignore
 import numpy as np
-import joblib
+import joblib # type: ignore
 from datetime import datetime
 from typing import Dict, Any
 import threading
@@ -10,8 +10,8 @@ import time
 from collections import deque
 from dataclasses import dataclass
 import logging
-import matplotlib.pyplot as plt
-import mediapipe as mp
+import matplotlib.pyplot as plt # type: ignore
+import mediapipe as mp # type: ignore
 
 # Set logging to show warnings (and errors) only.
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
