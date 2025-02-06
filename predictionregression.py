@@ -17,21 +17,23 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # Linear Model Coefficients
 # -------------------------
 # These coefficients come from your table.
-INTERCEPT = 100.0
+INTERCEPT = 3923.96
+
 COEFFICIENTS = {
-    "vein_pulsation_intensity": 26.916957662676726,
-    "sclera_color_balance": -6.907428129024707,
-    "pupil_response_time": 4.3025788705393335,
-    "scleral_vein_density": 1.8445358528132125,
-    "birefringence_index": -1.4465414007465307,
-    "vein_prominence": 0.23476660160393026,
-    "ir_temperature": 0.16994037409188242,
-    "tear_film_reflectivity": 0.12123172367583383,
-    "pupil_size": -0.06012419104913796,
-    "sclera_redness": -0.05107961598626965,
-    "pupil_dilation_rate": 0.011998298005915363,
-    "ir_intensity": 0.007247279344851364
+    "birefringence_index": -993.44,
+    "ir_temperature": -181.77,
+    "sclera_color_balance": 82.01,
+    "pupil_response_time": 29.62,
+    "ir_intensity": 24.81,
+    "vein_pulsation_intensity": 18.29,
+    "vein_prominence": 0.30,
+    "scleral_vein_density": 0.30,
+    "pupil_dilation_rate": -0.27,
+    "pupil_size": -0.27,
+    "sclera_redness": -0.18,
+    "tear_film_reflectivity": -0.13
 }
+
 
 # Define the expected feature order (must match training, ignoring the intercept)
 FEATURES_ORDER = [
