@@ -1,8 +1,8 @@
 import os
 import cv2
-import pandas as pd # type: ignore # type: ignore
+import pandas as pd  # type: ignore
 import numpy as np
-import joblib # type: ignore
+import joblib  # type: ignore
 from datetime import datetime
 from typing import Dict, Any
 import threading
@@ -10,8 +10,8 @@ import time
 from collections import deque
 from dataclasses import dataclass
 import logging
-import matplotlib.pyplot as plt # type: ignore
-import mediapipe as mp # type: ignore
+import matplotlib.pyplot as plt  # type: ignore
+import mediapipe as mp  # type: ignore
 
 # Set logging to show warnings (and errors) only.
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -522,22 +522,22 @@ class EyeGlucoseMonitor:
             if self.latest_instantaneous_prediction is not None:
                 if self.latest_instantaneous_prediction < 40:
                     warning_inst = "Instantaneous Low. Please check yourself."
-                    print(warning_inst)
+                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 elif self.latest_instantaneous_prediction > 400:
                     warning_inst = "Instantaneous High. Please check yourself."
-                    print(warning_inst)
+                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
             # Now check the EMA (smoothed) prediction.
             if self.latest_smoothed_prediction is not None:
                 if self.latest_smoothed_prediction < 40:
                     warning_avg = "Average Low. Please check yourself."
-                    print(warning_avg)
+                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 elif self.latest_smoothed_prediction > 400:
                     warning_avg = "Average High. Please check yourself."
-                    print(warning_avg)
+                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             # ----- End Added Warning Checks -----
 
