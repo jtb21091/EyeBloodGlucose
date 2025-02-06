@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt  # type: ignore
 import logging
 import warnings
 from sklearn.exceptions import ConvergenceWarning  # type: ignore
+import csv
+
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve
@@ -62,12 +64,13 @@ class EyeGlucoseModel:
         if not os.path.exists(self.labels_file):
             raise FileNotFoundError(f"Data file not found: {self.labels_file}")
         
-        # Attempt to read the CSV with the default (C) engine.
+        # First, try reading using on_bad_lines='skip'
         try:
-            df = pd.read_csv(self.labels_file)
+            df = pd.read_csv(self.labels_file, on_bad_lines='skip')
         except pd.errors.ParserError as e:
-            logging.warning(f"C engine failed to parse CSV: {e}\nFalling back to the Python engine.")
-            df = pd.read_csv(self.labels_file, engine='python')
+            logging.warning(f"Default engine failed with on_bad_lines='skip': {e}\nFalling back to the Python engine with explicit quoting settings.")
+            # Fall back to the Python engine and disable special quote processing.
+            df = pd.read_csv(self.labels_file, engine='python', on_bad_lines='skip', quoting=csv.QUOTE_NONE)
         
         df = self.remove_outliers(df)
         if len(df) < 5:
@@ -75,6 +78,10 @@ class EyeGlucoseModel:
         
         if 'timestamp' in df.columns:
             df['time_of_day'] = pd.to_datetime(df['timestamp']).dt.hour
+        
+        # Ensure blood_glucose column is present
+        if "blood_glucose" not in df.columns:
+            raise ValueError("The required column 'blood_glucose' was not found in the CSV file.")
         
         y = df["blood_glucose"].astype(float)
         reduced_features = [
@@ -91,6 +98,12 @@ class EyeGlucoseModel:
             'vein_pulsation_intensity', 
             'birefringence_index'
         ]
+        
+        # Check that all required features exist
+        missing_features = [feat for feat in reduced_features if feat not in df.columns]
+        if missing_features:
+            raise ValueError(f"The following required features are missing in the CSV: {missing_features}")
+        
         X = df[reduced_features]
 
         non_numeric_cols = X.select_dtypes(exclude=['number']).columns

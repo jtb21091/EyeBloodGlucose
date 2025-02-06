@@ -1,19 +1,20 @@
 Metric,Value,CGM Benchmark
-Best Model Name,LightGBM,
+Best Model Name,Neural Network,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 LGBMRegressor(learning_rate=0.01915007498171483, max_depth=6,
-                               n_estimators=269, num_leaves=89,
-                               random_state=42))])",
+                 MLPRegressor(activation='tanh', alpha=0.006554722959071679,
+                              hidden_layer_sizes=(64, 32),
+                              learning_rate_init=0.01004550510797341,
+                              max_iter=1000, random_state=42))])",
 Best Model Hyperparameters,,
-  regressor__learning_rate,0.01915007498171483,
-  regressor__max_depth,6,
-  regressor__n_estimators,269,
-  regressor__num_leaves,89,
-R²,0.8667976677700544,0.94
-MSE,125.15677069963702,6.2
-MAE,7.708362105455828,2.1
-MARD,7.07941480608633,10.5
-Sigma Level,1.3214444361348725,3.0
+  regressor__activation,tanh,
+  regressor__alpha,0.006554722959071679,
+  regressor__hidden_layer_sizes,"(64, 32)",
+  regressor__learning_rate_init,0.01004550510797341,
+R²,0.8308598877947344,0.94
+MSE,127.02157358794302,6.2
+MAE,8.52840555345911,2.1
+MARD,7.7478963281504445,10.5
+Sigma Level,1.3020820175793508,3.0
