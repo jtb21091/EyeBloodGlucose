@@ -1,20 +1,32 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Neural Network,
+Best Model Name,XGBoost,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 MLPRegressor(activation='tanh', alpha=0.0014274542224296982,
-                              hidden_layer_sizes=(128, 64),
-                              learning_rate_init=0.005263003483011954,
-                              max_iter=1000, random_state=42))])",
+                 XGBRegressor(base_score=None, booster=None, callbacks=None,
+                              colsample_bylevel=None, colsample_bynode=None,
+                              colsample_bytree=0.8004159535661037, device=None,
+                              early_stopping_rounds=None,
+                              enable_categorical=False, eval_metric...
+                              feature_types=None, gamma=None, grow_policy=None,
+                              importance_type=None,
+                              interaction_constraints=None,
+                              learning_rate=0.17181323452001876, max_bin=None,
+                              max_cat_threshold=None, max_cat_to_onehot=None,
+                              max_delta_step=None, max_depth=6, max_leaves=None,
+                              min_child_weight=None, missing=nan,
+                              monotone_constraints=None, multi_strategy=None,
+                              n_estimators=115, n_jobs=None,
+                              num_parallel_tree=None, random_state=42, ...))])",
 Best Model Hyperparameters,,
-  regressor__activation,tanh,
-  regressor__alpha,0.0014274542224296982,
-  regressor__hidden_layer_sizes,"(128, 64)",
-  regressor__learning_rate_init,0.005263003483011954,
-R²,0.7970627337912913,0.94
-MSE,220.00563637093498,6.2
-MAE,11.152521706760641,2.1
-MARD,9.904434254852458,10.5
-Sigma Level,0.9256190611610865,3.0
+  regressor__colsample_bytree,0.8004159535661037,
+  regressor__learning_rate,0.17181323452001876,
+  regressor__max_depth,6,
+  regressor__n_estimators,115,
+  regressor__subsample,0.6282274989601719,
+R²,0.8213105017536766,0.94
+MSE,235.41604505135302,6.2
+MAE,9.07580557534861,2.1
+MARD,7.4814345021542685,10.5
+Sigma Level,0.8120686925186874,3.0
