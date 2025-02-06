@@ -1,6 +1,6 @@
 import os
 import cv2
-import pandas as pd
+import pandas as pd # type: ignore
 import numpy as np
 import threading
 import time
@@ -8,7 +8,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # type: ignore
 
 # Set logging to show warnings (and errors) only.
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')

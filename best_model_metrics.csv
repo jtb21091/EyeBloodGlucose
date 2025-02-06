@@ -1,19 +1,19 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Gradient Boosting,
+Best Model Name,LightGBM,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 GradientBoostingRegressor(learning_rate=0.010156113098594747,
-                                           max_depth=11, n_estimators=358,
-                                           subsample=0.6027808522124762))])",
+                 LGBMRegressor(learning_rate=0.2079952138102537, max_depth=12,
+                               n_estimators=211, num_leaves=79,
+                               random_state=42))])",
 Best Model Hyperparameters,,
-  regressor__learning_rate,0.010156113098594747,
-  regressor__max_depth,11,
-  regressor__n_estimators,358,
-  regressor__subsample,0.6027808522124762,
-R²,0.8726808363274173,0.94
-MSE,186.17876762135572,6.2
-MAE,9.233612820156738,2.1
-MARD,8.050958000359378,10.5
-Sigma Level,1.0636604068903779,3.0
+  regressor__learning_rate,0.2079952138102537,
+  regressor__max_depth,12,
+  regressor__n_estimators,211,
+  regressor__num_leaves,79,
+R²,0.924262248074237,0.94
+MSE,325.38082895381234,6.2
+MAE,12.845505105426652,2.1
+MARD,10.129952267120965,10.5
+Sigma Level,0.8212028393936472,3.0

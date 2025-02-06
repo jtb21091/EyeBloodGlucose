@@ -1,0 +1,2 @@
+Update mean to median in prediction?
+Move far off in the training or filter them out?
