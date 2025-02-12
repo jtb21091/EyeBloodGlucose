@@ -17,5 +17,7 @@ pillow
 tqdm       
 pyyaml         
 h5py    
-mediapipe  
-coremltools     
+mediapipe 
+coremltools 
+opencv
+    
