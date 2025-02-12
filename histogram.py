@@ -43,8 +43,8 @@ if "blood_glucose" in df.columns:
     median_value = blood_glucose.median()
     plt.axvline(median_value, color='blue', linestyle='-.', linewidth=2, label=f'Median: {median_value:.0f}')
     
-    # Set x-axis ticks to show bin edges as whole numbers
-    plt.xticks(bins, [f"{int(b)}" for b in bins])
+    # Set x-axis ticks to show bin edges as whole numbers and rotate labels vertically
+    plt.xticks(bins, [f"{int(b)}" for b in bins], rotation=90)
     
     # KDE plot with bandwidth adjustment
     sns.kdeplot(blood_glucose, color='purple', linewidth=2, label="KDE Curve", bw_adjust=0.5)
