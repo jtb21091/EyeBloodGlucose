@@ -1,18 +1,19 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Random Forest,
+Best Model Name,Gradient Boosting,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 RandomForestRegressor(max_depth=30, min_samples_split=5,
-                                       n_estimators=287))])",
+                 GradientBoostingRegressor(learning_rate=0.08763399448000507,
+                                           max_depth=10, n_estimators=487,
+                                           subsample=0.7246844304357644))])",
 Best Model Hyperparameters,,
-  regressor__max_depth,30,
-  regressor__min_samples_leaf,1,
-  regressor__min_samples_split,5,
-  regressor__n_estimators,287,
-R²,0.8287849367078105,0.94
-MSE,572.4811532727806,6.2
-MAE,14.296973490456507,2.1
-MARD,13.6599948762399,10.5
-Sigma Level,0.5325687997266577,3.0
+  regressor__learning_rate,0.08763399448000507,
+  regressor__max_depth,10,
+  regressor__n_estimators,487,
+  regressor__subsample,0.7246844304357644,
+R²,0.7510058856261062,0.94
+MSE,926.4602603499434,6.2
+MAE,18.808482781531918,2.1
+MARD,15.770334383649127,10.5
+Sigma Level,0.47944484412356086,3.0
