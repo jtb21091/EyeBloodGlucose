@@ -1,17 +1,20 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Random Forest,
+Best Model Name,Neural Network,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 RandomForestRegressor(max_depth=20, n_estimators=223))])",
+                 MLPRegressor(activation='tanh', alpha=0.006008332605690108,
+                              hidden_layer_sizes=(128, 64),
+                              learning_rate_init=0.0026025136051586405,
+                              max_iter=1000, random_state=42))])",
 Best Model Hyperparameters,,
-  regressor__max_depth,20,
-  regressor__min_samples_leaf,1,
-  regressor__min_samples_split,2,
-  regressor__n_estimators,223,
-R²,0.7290337585914225,0.94
-MSE,1103.0393663278883,6.2
-MAE,22.194856989682293,2.1
-MARD,18.378916238282077,10.5
-Sigma Level,0.33450709307443993,3.0
+  regressor__activation,tanh,
+  regressor__alpha,0.006008332605690108,
+  regressor__hidden_layer_sizes,"(128, 64)",
+  regressor__learning_rate_init,0.0026025136051586405,
+R²,0.7153522280242228,0.94
+MSE,1198.064941638502,6.2
+MAE,23.55080520769426,2.1
+MARD,19.030435019810504,10.5
+Sigma Level,0.365610771603909,3.0
