@@ -1,20 +1,19 @@
 Metric,Value,CGM Benchmark
-Best Model Name,Neural Network,
+Best Model Name,Gradient Boosting,
 Best Model Details,"Pipeline(steps=[('preprocessor',
                  Pipeline(steps=[('imputer', SimpleImputer(strategy='median')),
                                  ('scaler', StandardScaler())])),
                 ('regressor',
-                 MLPRegressor(activation='tanh', alpha=0.009485527090157502,
-                              hidden_layer_sizes=(128, 64),
-                              learning_rate_init=0.0019182496720710062,
-                              max_iter=1000, random_state=42))])",
+                 GradientBoostingRegressor(learning_rate=0.01463698495866023,
+                                           max_depth=10, n_estimators=448,
+                                           subsample=0.7712736593269257))])",
 Best Model Hyperparameters,,
-  regressor__activation,tanh,
-  regressor__alpha,0.009485527090157502,
-  regressor__hidden_layer_sizes,"(128, 64)",
-  regressor__learning_rate_init,0.0019182496720710062,
-R²,0.6508045988525453,0.94
-MSE,1542.597763513606,6.2
-MAE,24.96802208401402,2.1
-MARD,18.379551993395317,10.5
-Sigma Level,0.21900432714675167,3.0
+  regressor__learning_rate,0.01463698495866023,
+  regressor__max_depth,10,
+  regressor__n_estimators,448,
+  regressor__subsample,0.7712736593269257,
+R²,0.638471804365666,0.94
+MSE,1649.7214036398877,6.2
+MAE,26.20140119853028,2.1
+MARD,21.348482221525668,10.5
+Sigma Level,0.32718326634703826,3.0
