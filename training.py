@@ -150,14 +150,20 @@ class EyeGlucoseModel:
                     "subsample": uniform(0.6, 0.4)
                 }
             },
-            "Neural Network": {
-                "model": MLPRegressor(max_iter=1000, early_stopping=False, random_state=42),
-                "params": {
-                    "hidden_layer_sizes": [(64, 32), (128, 64), (64, 64, 32)],
-                    "activation": ["relu", "tanh"],
-                    "alpha": uniform(0.0001, 0.01),
-                    "learning_rate_init": uniform(0.0001, 0.01)
-                }
+         "Neural Network": {
+    "model": MLPRegressor(
+        max_iter=2000,
+        early_stopping=True,
+        validation_fraction=0.1,
+        n_iter_no_change=20,
+        random_state=42
+    ),
+    "params": {
+        "hidden_layer_sizes": [(128, 64), (256, 128), (128, 128, 64)],
+        "activation": ["relu", "tanh"],
+        "alpha": uniform(0.0001, 0.01),
+        "learning_rate_init": uniform(0.0001, 0.01)
+    }
             }
         }
 
