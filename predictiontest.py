@@ -475,28 +475,26 @@ class EyeGlucoseMonitor:
 
             detection = self.detect_face_and_eyes(frame)
             if detection.is_valid and (len(detection.left_eye) > 0 or len(detection.right_eye) > 0):
-                features = self.extract_features(frame)
-                self.predict_glucose(features)
-                current_time = time.time() - start_time
-                with self.prediction_lock:
-                    inst_pred = self.latest_instantaneous_prediction if self.latest_instantaneous_prediction is not None else np.nan
-                    smooth_pred = self.latest_smoothed_prediction if self.latest_smoothed_prediction is not None else np.nan
-                self.time_history.append(current_time)
-                self.instantaneous_history.append(inst_pred)
-                self.smoothed_history.append(smooth_pred)
-
-                # Draw the detected face rectangle and eye boxes.
-                if detection.face_rect is not None:
-                    (x, y, w_box, h_box) = detection.face_rect
-                    cv2.rectangle(frame, (x, y), (x + w_box, y + h_box), (255, 0, 0), 2)
-                for box in detection.left_eye:
-                    if box is not None:
-                        (ex, ey, ew, eh) = box
-                        cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
-                for box in detection.right_eye:
-                    if box is not None:
-                        (ex, ey, ew, eh) = box
-                        cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 0, 255), 2)
+                # ----- Added Check for Eyes Closed -----
+                if not detection.eyes_open:
+                    with self.prediction_lock:
+                        self.latest_smoothed_prediction = None
+                        self.latest_instantaneous_prediction = None
+                    current_time = time.time() - start_time
+                    self.time_history.append(current_time)
+                    self.instantaneous_history.append(np.nan)
+                    self.smoothed_history.append(np.nan)
+                else:
+                    features = self.extract_features(frame)
+                    self.predict_glucose(features)
+                    current_time = time.time() - start_time
+                    with self.prediction_lock:
+                        inst_pred = self.latest_instantaneous_prediction if self.latest_instantaneous_prediction is not None else np.nan
+                        smooth_pred = self.latest_smoothed_prediction if self.latest_smoothed_prediction is not None else np.nan
+                    self.time_history.append(current_time)
+                    self.instantaneous_history.append(inst_pred)
+                    self.smoothed_history.append(smooth_pred)
+                # ----- End Added Check for Eyes Closed -----
             else:
                 with self.prediction_lock:
                     self.latest_smoothed_prediction = None
@@ -512,8 +510,14 @@ class EyeGlucoseMonitor:
 
             # Display prediction text on the frame.
             with self.prediction_lock:
-                inst_text = f"Inst: {self.latest_instantaneous_prediction:.1f} mg/dL" if self.latest_instantaneous_prediction is not None else "Inst: No Reading"
-                smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
+                # ----- Added Check for Eyes Closed in Display -----
+                if not detection.eyes_open:
+                    inst_text = "No glucose reading, eyes closed"
+                    smooth_text = "No glucose reading, eyes closed"
+                else:
+                    inst_text = f"Inst: {self.latest_instantaneous_prediction:.1f} mg/dL" if self.latest_instantaneous_prediction is not None else "Inst: No Reading"
+                    smooth_text = f"Avg: {self.latest_smoothed_prediction:.1f} mg/dL" if self.latest_smoothed_prediction is not None else "Avg: No Reading"
+                # ----- End Added Check for Eyes Closed in Display -----
             cv2.putText(frame, inst_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
             cv2.putText(frame, smooth_text, (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
             
@@ -522,22 +526,18 @@ class EyeGlucoseMonitor:
             if self.latest_instantaneous_prediction is not None:
                 if self.latest_instantaneous_prediction < 40:
                     warning_inst = "Instantaneous Low. Please check yourself."
-                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 elif self.latest_instantaneous_prediction > 400:
                     warning_inst = "Instantaneous High. Please check yourself."
-                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_inst, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
             # Now check the EMA (smoothed) prediction.
             if self.latest_smoothed_prediction is not None:
                 if self.latest_smoothed_prediction < 40:
                     warning_avg = "Average Low. Please check yourself."
-                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 elif self.latest_smoothed_prediction > 400:
                     warning_avg = "Average High. Please check yourself."
-                    # Warning displayed on frame only.
                     cv2.putText(frame, warning_avg, (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             # ----- End Added Warning Checks -----
 
