@@ -1,21 +1,39 @@
-opencv-python==4.10.0.84
+# Use contrib to avoid conflicts with mediapipe's opencv dep
+opencv-contrib-python==4.10.0.84
+
 joblib==1.5.1
 lightgbm==4.6.0
 matplotlib==3.10.5
-numpy==1.26.4
+
+# TF 2.13 requires numpy <= 1.24.3; many libs still fine with this
+numpy==1.24.3
 pandas==2.3.1
-scipy==1.16.1
+
+# SciPy needs to match NumPy 1.24 on Py3.11
+scipy==1.11.4
+
 scikit-learn==1.7.1
 xgboost==3.0.4
 seaborn==0.13.2
 statsmodels==0.14.5
 catboost==1.2.8
+
+# TF 2.13 + Keras 2.13 keep protobuf < 5 (compatible with MediaPipe)
 tensorflow==2.13.1
-torch==2.8.0
 keras==2.13.1
+
+# Optional: PyTorch (fine to keep)
+torch==2.8.0
+
 pillow==11.3.0
 tqdm==4.67.1
 pyyaml==6.0.2
 h5py==3.14.0
+
+# MediaPipe requires protobuf < 5 and numpy < 2
 mediapipe==0.10.21
+
 coremltools==8.3.0
+
+# Pin protobuf to satisfy both TF 2.13 and MediaPipe
+protobuf==4.25.3
