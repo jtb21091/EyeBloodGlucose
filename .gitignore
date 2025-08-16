@@ -13,6 +13,7 @@ eye_glucose_data/images/
 .DS_Store
 .venv
 .venv312
+.venv311
 
 # Ignore Jupyter notebook checkpoints (if used)
 .ipynb_checkpoints/
