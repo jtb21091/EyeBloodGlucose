@@ -1,39 +1,36 @@
-# Use contrib to avoid conflicts with mediapipe's opencv dep
+# Video/vision
 opencv-contrib-python==4.10.0.84
 
-joblib==1.5.1
-lightgbm==4.6.0
-matplotlib==3.10.5
-
-# TF 2.13 requires numpy <= 1.24.3; many libs still fine with this
-numpy==1.24.3
-pandas==2.3.1
-
-# SciPy needs to match NumPy 1.24 on Py3.11
+# Core scientific stack (NumPy 1.x line for MediaPipe compatibility)
+numpy==1.26.4
 scipy==1.11.4
-
-scikit-learn==1.7.1
-xgboost==3.0.4
+pandas==2.2.3
+matplotlib==3.9.2
 seaborn==0.13.2
-statsmodels==0.14.5
+pillow==10.4.0
+
+# ML libraries (latest compatible with NumPy 1.x)
+scikit-learn==1.5.2
+xgboost==2.1.3
+lightgbm==4.6.0
 catboost==1.2.8
-
-# TF 2.13 + Keras 2.13 keep protobuf < 5 (compatible with MediaPipe)
-tensorflow==2.13.1
-keras==2.13.1
-
-# Optional: PyTorch (fine to keep)
-torch==2.8.0
-
-pillow==11.3.0
+statsmodels==0.14.2
+joblib==1.5.1
 tqdm==4.67.1
 pyyaml==6.0.2
-h5py==3.14.0
+h5py==3.11.0
 
-# MediaPipe requires protobuf < 5 and numpy < 2
+# MediaPipe + compatibility pins
 mediapipe==0.10.21
-
-coremltools==8.3.0
-
-# Pin protobuf to satisfy both TF 2.13 and MediaPipe
 protobuf==4.25.3
+
+# TF/Keras (still on the protobuf<5, NumPy<2 line)
+tensorflow==2.15.0
+keras==2.15.0
+
+# Apple export
+coremltools==8.3
+# (Optional, often tricky on macOS without conda; comment out if it causes build issues)
+
+# Optional: PyTorch (commented – wheels may not exist for your macOS/Python combo)
+# torch==2.3.1
