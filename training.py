@@ -8,6 +8,15 @@ import warnings
 from sklearn.exceptions import ConvergenceWarning # type: ignore
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
+from sklearn.model_selection import KFold
+
+# Global CV strategy (shuffled for robustness)
+cv5 = KFold(n_splits=5, shuffle=True, random_state=42)
+
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold # type: ignore
 from sklearn.linear_model import LinearRegression # type: ignore
 from sklearn.svm import SVR # type: ignore
@@ -109,6 +118,14 @@ class EyeGlucoseModel:
         if len(non_numeric_cols) > 0:
             logging.warning(f"Dropping non-numeric columns: {list(non_numeric_cols)}")
             X = X.drop(columns=non_numeric_cols)
+
+        # Drop constant / near-constant columns
+        stds = X.std(numeric_only=True)
+        low_var_cols = stds[stds < 1e-8].index.tolist()
+        if low_var_cols:
+            logging.info(f"Dropping low-variance columns: {low_var_cols}")
+            X = X.drop(columns=low_var_cols)
+
             
         return X, y
 
@@ -128,28 +145,27 @@ class EyeGlucoseModel:
                 "params": {
                     "C": uniform(0.1, 10.0),
                     "epsilon": uniform(0.01, 1.0),
-                    "kernel": ["linear", "rbf"]
+                    "kernel": ["linear", "rbf", "poly"]
                 }
             },
             "Random Forest": {
                 "model": RandomForestRegressor(),
                 "params": {
-                    "n_estimators": randint(100, 500),
-                    "max_depth": randint(5, 50),
-                    "min_samples_split": randint(2, 10),
-                    "min_samples_leaf": randint(1, 4)
-                }
-            },
+                    "n_estimators": randint(200, 1000),
+                    "max_depth": randint(3, 40),
+                    "min_samples_split": randint(2, 20),
+                    "min_samples_leaf": randint(1, 10),
+                    "max_features": ["sqrt", "log2", None]
+                } },
             "Gradient Boosting": {
                 "model": GradientBoostingRegressor(),
                 "params": {
-                    "n_estimators": randint(100, 500),
-                    "learning_rate": uniform(0.01, 0.3),
-                    "max_depth": randint(3, 15),
-                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
-                    "subsample": uniform(0.6, 0.4)
-                }
-            },
+                    "n_estimators": randint(200, 1000),
+                    "learning_rate": uniform(0.01, 0.2),
+                    "max_depth": randint(2, 8),
+                    "subsample": uniform(0.7, 0.3),
+                    "max_features": ["sqrt", "log2", None]
+                } },
          "Neural Network": {
     "model": MLPRegressor(
         max_iter=2000,
@@ -183,12 +199,19 @@ class EyeGlucoseModel:
             models["LightGBM"] = {
                 "model": LGBMRegressor(random_state=42),
                 "params": {
-                    "n_estimators": randint(100, 500),
-                    "learning_rate": uniform(0.01, 0.3),
-                    "max_depth": randint(3, 15),
-                    "num_leaves": randint(20, 100)
-                }
-            }
+                    "n_estimators": randint(200, 1000),
+                    "learning_rate": uniform(0.01, 0.2),
+                    "max_depth": randint(-1, 12),
+                    "num_leaves": randint(16, 256),
+                    "min_child_samples": randint(5, 40),
+                    "min_split_gain": uniform(0.0, 0.02),
+                    "min_data_in_bin": randint(1, 20),
+                    "subsample": uniform(0.7, 0.3),
+                    "colsample_bytree": uniform(0.7, 0.3),
+                    "reg_alpha": uniform(0.0, 0.2),
+                    "reg_lambda": uniform(0.0, 0.2),
+                    "force_row_wise": [True]
+                } }
         if CatBoostRegressor is not None:
             models["CatBoost"] = {
                 "model": CatBoostRegressor(random_state=42, silent=True),
@@ -206,7 +229,7 @@ class EyeGlucoseModel:
             X_train,
             y_train,
             scoring="neg_mean_squared_error",
-            cv=5,
+            cv=cv5,
             n_jobs=-1,
             train_sizes=np.linspace(0.1, 1.0, 10)
         )
@@ -259,6 +282,7 @@ class EyeGlucoseModel:
         logging.info(f"Best model metrics and details saved to: {filename}")
 
     def train_model(self):
+        cv5 = KFold(n_splits=5, shuffle=True, random_state=42)
         X, y = self.prepare_data()
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -297,7 +321,7 @@ class EyeGlucoseModel:
                 pipeline,
                 {f"regressor__{key}": value for key, value in config['params'].items()},
                 n_iter=n_iter_search,
-                cv=5,
+                cv=cv5,
                 scoring='neg_mean_squared_error',
                 n_jobs=-1,
                 random_state=42
