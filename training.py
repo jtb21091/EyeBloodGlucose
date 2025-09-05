@@ -197,9 +197,8 @@ class EyeGlucoseModel:
             }
         if LGBMRegressor is not None:
             models["LightGBM"] = {
-                "model": LGBMRegressor(random_state=42),
-                "params": {
-                    "n_estimators": randint(200, 1000),
+                "model": LGBMRegressor(random_state=42, verbosity=-1),
+                "params": {"n_estimators": randint(200, 1000),
                     "learning_rate": uniform(0.01, 0.2),
                     "max_depth": randint(-1, 12),
                     "num_leaves": randint(16, 256),
@@ -210,8 +209,9 @@ class EyeGlucoseModel:
                     "colsample_bytree": uniform(0.7, 0.3),
                     "reg_alpha": uniform(0.0, 0.2),
                     "reg_lambda": uniform(0.0, 0.2),
-                    "force_row_wise": [True]
-                } }
+                    "force_row_wise": [True],
+            "verbosity": [-1]
+        } }
         if CatBoostRegressor is not None:
             models["CatBoost"] = {
                 "model": CatBoostRegressor(random_state=42, silent=True),
@@ -326,7 +326,15 @@ class EyeGlucoseModel:
                 n_jobs=-1,
                 random_state=42
             )
-            search.fit(X_train, y_train)
+            
+fit_params = {}
+try:
+    import lightgbm as lgb
+    # Silence eval logging completely
+    fit_params["regressor__callbacks"] = [lgb.log_evaluation(0)]
+except Exception:
+    pass
+search.fit(X_train, y_train, **fit_params)
             y_pred = search.predict(X_val)
             
             r2 = r2_score(y_val, y_pred)
