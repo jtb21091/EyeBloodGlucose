@@ -295,46 +295,49 @@ class EyeGlucoseModel:
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', scaler)
         ])
-
-        best_score = float('-inf')
-        best_model_name = None
-        best_estimator = None
-        best_r2 = None
-        best_mse = None
-        best_mae = None
-        best_mard = None
-        best_sigma = None
-        best_model_params = None  # To store best hyperparameters
-
-        models = self.get_model_configurations()
-        n_iter_search = 100
-
-        for name, config in models.items():
+for name, config in models.items():
             logging.info(f"\nTraining {name}...")
-            current_preprocessor = preprocessor
-
+            
+            # Create pipeline with preprocessing and model
             pipeline = Pipeline([
-                ('preprocessor', current_preprocessor),
-                ('regressor', config['model'])
+                ('preprocessor', preprocessor),
+                ('regressor', config["model"])
             ])
+            
+            # Create parameter grid for the pipeline
+            param_grid = {}
+            for param, values in config["params"].items():
+                param_grid[f'regressor__{param}'] = values
+            
+            # Set up randomized search
             search = RandomizedSearchCV(
                 pipeline,
-                {f"regressor__{key}": value for key, value in config['params'].items()},
+                param_grid,
                 n_iter=n_iter_search,
                 cv=cv5,
                 scoring='neg_mean_squared_error',
                 n_jobs=-1,
                 random_state=42
             )
-            
-fit_params = {}
-try:
-    import lightgbm as lgb
-    # Silence eval logging completely
-    fit_params["regressor__callbacks"] = [lgb.log_evaluation(0)]
-except Exception:
-    pass
-search.fit(X_train, y_train, **fit_params)
+
+            fit_params = {}
+            try:
+                import lightgbm as lgb  # only used if callbacks are supported
+                import inspect
+                reg = getattr(search.estimator, "named_steps", {}).get("regressor", None)
+                supports_callbacks = False
+                if reg is not None and hasattr(reg, "fit"):
+                    try:
+                        sig = inspect.signature(reg.fit)
+                        supports_callbacks = "callbacks" in sig.parameters
+                    except Exception:
+                        supports_callbacks = False
+                if supports_callbacks:
+                    fit_params["regressor__callbacks"] = [lgb.log_evaluation(0)]
+            except Exception:
+                fit_params = {}
+
+            search.fit(X_train, y_train, **fit_params)
             y_pred = search.predict(X_val)
             
             r2 = r2_score(y_val, y_pred)
@@ -368,6 +371,8 @@ search.fit(X_train, y_train, **fit_params)
                 best_mse = mse
                 best_mae = mae
                 best_mard = mard_value
+                best_sigma = sigma_value
+                best_model_params = search.best_params_
                 best_sigma = sigma_value
                 best_model_params = search.best_params_
 
