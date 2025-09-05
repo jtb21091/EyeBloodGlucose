@@ -30,12 +30,10 @@ try:
     from xgboost import XGBRegressor
 except Exception:
     XGBRegressor = None
-
 try:
     from lightgbm import LGBMRegressor
 except Exception:
     LGBMRegressor = None
-
 try:
     from catboost import CatBoostRegressor
 except Exception:
@@ -44,29 +42,50 @@ except Exception:
 # Global CV strategy
 cv5 = KFold(n_splits=5, shuffle=True, random_state=42)
 
-
 def compute_mard(y_true, y_pred):
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     denom = np.clip(np.abs(y_true), 1e-8, None)
     return float(np.mean(np.abs(y_pred - y_true) / denom) * 100.0)
 
-
 def compute_sigma_level(y_true, y_pred, TEa=15):
     mard = compute_mard(y_true, y_pred)
     return float(TEa / (mard + 1e-8))
 
-
 class EyeGlucoseModel:
-    def __init__(self):
+    def __init__(self, csv_path="labels.csv"):
         self.best_model = None
+        self.csv_path = csv_path
 
     def prepare_data(self):
-        # Dummy implementation – replace with real data preparation
-        n = 200
-        X = pd.DataFrame({"feature1": np.random.randn(n), "feature2": np.random.randn(n)})
-        y = X["feature1"] * 10 + X["feature2"] * 5 + np.random.randn(n)
-        return X, y
+        """
+        Loads labels.csv if present; otherwise falls back to dummy data.
+        - Uses 'blood_glucose' as target if that column exists; otherwise last numeric column.
+        - Keeps only numeric features.
+        """
+        if os.path.exists(self.csv_path):
+            logging.info(f"Loading dataset from: {self.csv_path}")
+            df = pd.read_csv(self.csv_path)
+            # Keep only numeric columns
+            num = df.select_dtypes(include=[np.number]).copy()
+            if num.empty or num.shape[1] < 2:
+                raise ValueError("Dataset must contain at least one numeric feature and one numeric target.")
+            if "blood_glucose" in num.columns:
+                y = num["blood_glucose"].astype(float)
+                X = num.drop(columns=["blood_glucose"])
+            else:
+                # Use last numeric column as target if not specified
+                y = num.iloc[:, -1].astype(float)
+                X = num.iloc[:, :-1]
+            # Basic sanity logs
+            logging.info(f"Rows: {len(df)}, numeric features: {X.shape[1]}, target name: {y.name}")
+            return X, y
+        else:
+            logging.warning("labels.csv not found—using dummy synthetic data.")
+            n = 200
+            X = pd.DataFrame({"feature1": np.random.randn(n), "feature2": np.random.randn(n)})
+            y = X["feature1"] * 10 + X["feature2"] * 5 + np.random.randn(n)
+            return X, y
 
     def get_model_configurations(self):
         models = {
@@ -114,7 +133,6 @@ class EyeGlucoseModel:
                 },
             },
         }
-
         if XGBRegressor is not None:
             models["XGBoost"] = {
                 "model": XGBRegressor(objective="reg:squarederror", verbosity=0, random_state=42),
@@ -126,7 +144,6 @@ class EyeGlucoseModel:
                     "colsample_bytree": uniform(0.6, 0.4),
                 },
             }
-
         if LGBMRegressor is not None:
             models["LightGBM"] = {
                 "model": LGBMRegressor(random_state=42, verbosity=-1),
@@ -145,7 +162,6 @@ class EyeGlucoseModel:
                     "force_row_wise": [True],
                 },
             }
-
         if CatBoostRegressor is not None:
             models["CatBoost"] = {
                 "model": CatBoostRegressor(random_state=42, silent=True),
@@ -155,7 +171,6 @@ class EyeGlucoseModel:
                     "depth": randint(3, 15),
                 },
             }
-
         return models
 
     def plot_learning_curve(self, estimator, X_train, y_train, model_name):
@@ -172,8 +187,8 @@ class EyeGlucoseModel:
         val_loss = -np.mean(val_scores, axis=1)
 
         plt.figure(figsize=(10, 6))
-        plt.plot(train_sizes, train_loss, 'o-', color="r", label="Training Loss")
-        plt.plot(train_sizes, val_loss, 'o-', color="g", label="Validation Loss")
+        plt.plot(train_sizes, train_loss, 'o-', label="Training Loss")
+        plt.plot(train_sizes, val_loss, 'o-', label="Validation Loss")
         plt.xlabel("Training Set Size")
         plt.ylabel("Mean Squared Error")
         plt.title(f"Learning Curve for {model_name}")
@@ -228,7 +243,6 @@ class EyeGlucoseModel:
 
         for name, config in models.items():
             logging.info(f"\nTraining {name}...")
-
             pipeline = Pipeline([
                 ("preprocessor", preprocessor),
                 ("regressor", config["model"]),
@@ -244,7 +258,6 @@ class EyeGlucoseModel:
                 n_jobs=-1,
                 random_state=42,
             )
-
             fit_params = {}
             search.fit(X_train, y_train, **fit_params)
             y_pred = search.predict(X_val)
@@ -257,17 +270,13 @@ class EyeGlucoseModel:
             sigma_value = compute_sigma_level(yv, y_pred, TEa=15)
 
             logging.info(f"Best parameters for {name}: {search.best_params_}")
-            logging.info(f"Metrics for {name}:")
-            logging.info(f"  R² Score: {r2:.5f}")
-            logging.info(f"  MSE: {mse:.5f}")
-            logging.info(f"  MAE: {mae:.5f}")
-            logging.info(f"  MARD: {mard_value:.5f}%")
-            logging.info(f"  Sigma Level: {sigma_value:.5f}")
+            logging.info(f"Metrics for {name}: R²={r2:.5f} | MSE={mse:.5f} | MAE={mae:.5f} | MARD={mard_value:.5f}% | Sigma={sigma_value:.5f}")
 
+            # Parity plot (closed figure)
             plt.figure(figsize=(10, 6))
             plt.scatter(yv, y_pred, alpha=0.5)
             mn, mx = float(np.min(yv)), float(np.max(yv))
-            plt.plot([mn, mx], [mn, mx], 'r--', lw=2)
+            plt.plot([mn, mx], [mn, mx], '--', lw=2)
             plt.xlabel("Actual Values")
             plt.ylabel("Predicted Values")
             plt.title(f"{name}: Actual vs. Predicted Values")
@@ -279,39 +288,19 @@ class EyeGlucoseModel:
                 best_score = r2
                 best_estimator = search.best_estimator_
                 best_model_name = name
-                best_r2 = r2
-                best_mse = mse
-                best_mae = mae
-                best_mard = mard_value
-                best_sigma = sigma_value
+                best_r2, best_mse, best_mae = r2, mse, mae
+                best_mard, best_sigma = mard_value, sigma_value
                 best_model_params = search.best_params_
 
         logging.info(f"\nBest Model: {best_model_name} with R² Score: {best_score:.5f}")
         self.best_model = best_estimator
         self.save_model()
 
-        cgm_benchmarks = {
-            "R²": 0.94,
-            "MSE": 6.2,
-            "MAE": 2.1,
-            "MARD": 10.5,
-            "Sigma Level": 3.0,
-        }
-
-        best_metrics = {
-            "R2": best_r2,
-            "MSE": best_mse,
-            "MAE": best_mae,
-            "MARD": best_mard,
-            "Sigma": best_sigma,
-        }
+        cgm_benchmarks = {"R²": 0.94, "MSE": 6.2, "MAE": 2.1, "MARD": 10.5, "Sigma Level": 3.0}
+        best_metrics = {"R2": best_r2, "MSE": best_mse, "MAE": best_mae, "MARD": best_mard, "Sigma": best_sigma}
         best_model_details = str(best_estimator)
         self.save_metrics_to_csv(
-            best_model_name,
-            best_metrics,
-            cgm_benchmarks,
-            best_model_details,
-            best_model_params,
+            best_model_name, best_metrics, cgm_benchmarks, best_model_details, best_model_params,
             filename="best_model_metrics.csv",
         )
 
@@ -321,3 +310,18 @@ class EyeGlucoseModel:
             return
         joblib.dump(self.best_model, path)
         logging.info(f"Saved best model to {path}")
+
+if __name__ == "__main__":
+    # Minimal CLI: allow overriding the csv path:  python training.py /path/to/labels.csv
+    import sys
+    csv_arg = sys.argv[1] if len(sys.argv) > 1 else "labels.csv"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+    try:
+        model = EyeGlucoseModel(csv_path=csv_arg)
+        model.train_model()
+    except Exception as e:
+        logging.exception("Fatal error during training")
+        raise
