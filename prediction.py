@@ -1,8 +1,16 @@
-import os, cv2, numpy as np, pandas as pd, joblib, logging, time, json
+# eye_glucose_runtime.py
+# Run with:  python eye_glucose_runtime.py best_model.pkl
+
+import os, cv2, numpy as np, pandas as pd, joblib, logging, time
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from collections import deque
+
+# --- If matplotlib key events don't fire on macOS, uncomment the next two lines:
+# import matplotlib
+# matplotlib.use("TkAgg")
+
 import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -114,9 +122,9 @@ class EyeGlucoseMonitor:
     def __init__(self, model_path="best_model.pkl"):
         self.model = self._load_model(model_path)
         if not hasattr(self.model, "feature_names_in_"):
-            raise SystemExit("Model is missing feature_names_in_. Retrain with provided training.py.")
+            raise SystemExit("Model is missing feature_names_in_. Retrain with the provided training script.")
         if list(self.model.feature_names_in_) != FEATURES_ORDER:
-            raise SystemExit(f"Model features {list(self.model.feature_names_in_)} do not match the required 12 features. Retrain.")
+            raise SystemExit(f"Model features {list(self.model.feature_names_in_)} do not match required 12-feature schema. Retrain.")
 
         # Extract training means for fill
         pre = self.model.named_steps["preprocessor"]
@@ -128,6 +136,7 @@ class EyeGlucoseMonitor:
         self.avg = deque(maxlen=200)
         self.smooth = None
         self.alpha = 0.009
+        self._stop = False  # <— stop flag set by either window
 
     def _load_model(self, path):
         if not os.path.exists(path): raise SystemExit(f"Model not found: {path}")
@@ -144,9 +153,10 @@ class EyeGlucoseMonitor:
         return frame[y1:y2, x1:x2]
 
     def detect(self, frame):
+        # placeholder for a future detector; fallback keeps things running
         return Detection(roi=self._fallback_roi(frame))
 
-    def extract_features(self, frame):
+    def extract_features(self, frame) -> Dict[str,float]:
         roi = self.detect(frame).roi
         feats = {
             "pupil_size": get_pupil_size(roi),
@@ -181,37 +191,67 @@ class EyeGlucoseMonitor:
         ls, = ax.plot([], [], label="Smoothed", color="orange")
         ax.set_xlabel("Time (s)"); ax.set_ylabel("Blood Glucose (mg/dL)"); ax.legend()
 
+        # Let the matplotlib window control the loop
+        def _on_close(event):
+            self._stop = True
+        def _on_key(event):
+            if event.key in ("escape", "q"):
+                self._stop = True
+        fig.canvas.mpl_connect("close_event", _on_close)
+        fig.canvas.mpl_connect("key_press_event", _on_key)
+
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            print("Could not open webcam."); return
+            print("Could not open webcam.")
+            plt.close(fig)
+            return
+
         print("Webcam successfully opened.")
         t0 = time.time()
 
         try:
             while True:
+                # Exit if matplotlib asked us to stop or the figure disappeared
+                if self._stop or not plt.fignum_exists(fig.number):
+                    break
+
                 ok, frame = cap.read()
-                if not ok: break
+                if not ok:
+                    break
+
                 feats = self.extract_features(frame)
                 y = self.predict_once(feats)
                 self.smooth = y if self.smooth is None else self.alpha*y + (1-self.alpha)*self.smooth
 
-                t = time.time()-t0
+                t = time.time() - t0
                 self.time.append(t); self.inst.append(y); self.avg.append(self.smooth)
 
+                # Overlay numbers on the video
                 cv2.putText(frame, f"Inst: {y:.1f} mg/dL", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
                 cv2.putText(frame, f"Avg: {self.smooth:.1f} mg/dL", (10,80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
                 cv2.imshow("Blood Glucose", frame)
 
-                li.set_data(self.time, self.inst); ls.set_data(self.time, self.avg)
+                # Update plot
+                li.set_data(self.time, self.inst)
+                ls.set_data(self.time, self.avg)
                 ax.relim(); ax.autoscale_view()
                 fig.canvas.draw(); fig.canvas.flush_events()
 
-                if cv2.waitKey(1) in (ord('q'), 27) or cv2.getWindowProperty("Blood Glucose", cv2.WND_PROP_VISIBLE) < 1:
+                # Exit if OpenCV window gets a key or is closed
+                if (cv2.waitKey(1) in (ord('q'), 27)) or (cv2.getWindowProperty("Blood Glucose", cv2.WND_PROP_VISIBLE) < 1):
                     break
+
+                # Keep matplotlib responsive
                 plt.pause(0.001)
         finally:
-            cap.release(); cv2.destroyAllWindows()
-            plt.ioff(); plt.show()
+            # Clean shutdown
+            cap.release()
+            cv2.destroyAllWindows()
+            try:
+                plt.ioff()
+                plt.close(fig)  # don't block; just close
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     import sys
