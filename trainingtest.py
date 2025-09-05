@@ -1,37 +1,37 @@
 import os
-import pandas as pd
+import pandas as pd  # type: ignore
 import numpy as np
-import joblib
-import matplotlib.pyplot as plt
+import joblib  # type: ignore
+import matplotlib.pyplot as plt  # type: ignore
 import logging
 import warnings
-from sklearn.exceptions import ConvergenceWarning
+from sklearn.exceptions import ConvergenceWarning  # type: ignore
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold
-from sklearn.linear_model import LinearRegression
-from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures
-from sklearn.pipeline import Pipeline
-from scipy.stats import uniform, randint
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, learning_curve, KFold  # type: ignore
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet  # Regularized models added here
+from sklearn.svm import SVR  # type: ignore
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor  # type: ignore
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error  # type: ignore
+from sklearn.impute import SimpleImputer  # type: ignore
+from sklearn.preprocessing import StandardScaler, RobustScaler, PolynomialFeatures  # type: ignore
+from sklearn.pipeline import Pipeline  # type: ignore
+from scipy.stats import uniform, randint  # type: ignore
 
 # Import neural network regressor
-from sklearn.neural_network import MLPRegressor
+from sklearn.neural_network import MLPRegressor  # type: ignore
 
 # Import for ensemble models if installed.
 try:
-    from xgboost import XGBRegressor
+    from xgboost import XGBRegressor  # type: ignore
 except ImportError:
     XGBRegressor = None
 try:
-    from lightgbm import LGBMRegressor
+    from lightgbm import LGBMRegressor  # type: ignore
 except ImportError:
     LGBMRegressor = None
 try:
-    from catboost import CatBoostRegressor
+    from catboost import CatBoostRegressor  # type: ignore
 except ImportError:
     CatBoostRegressor = None
 
@@ -115,11 +115,9 @@ class EyeGlucoseModel:
     def get_model_configurations(self):
         """
         Return a dictionary of models and hyperparameter search spaces.
-        In this trimmed version we keep:
-          - SVR
-          - Random Forest
-          - Gradient Boosting
-          - Neural Network (MLPRegressor)
+        This version includes:
+          - SVR, Random Forest, Gradient Boosting, Neural Network,
+          - Regularized linear models (Ridge for L2, Lasso for L1, ElasticNet for both),
           - Additional ensemble models (XGBoost, LightGBM, CatBoost) if installed.
         """
         models = {
@@ -146,21 +144,36 @@ class EyeGlucoseModel:
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
                     "max_depth": randint(3, 15),
-                    # Use uniform(0.6, 0.4) to draw values in [0.6, 1.0)
                     "subsample": uniform(0.6, 0.4)
                 }
             },
             "Neural Network": {
-                # NOTE: If you receive convergence warnings for the MLPRegressor,
-                # consider enabling early_stopping (set early_stopping=True),
-                # increasing max_iter beyond 1000, or fine-tuning learning_rate_init,
-                # hidden_layer_sizes, and activation functions.
-                "model": MLPRegressor(max_iter=5000, early_stopping=True, random_state=42),
+                "model": MLPRegressor(max_iter=1000, early_stopping=False, random_state=42),
                 "params": {
                     "hidden_layer_sizes": [(64, 32), (128, 64), (64, 64, 32)],
                     "activation": ["relu", "tanh"],
-                    "alpha": uniform(0.0001, 0.01),
+                    "alpha": uniform(0.0001, 0.01),  # L2 regularization for NN weights
                     "learning_rate_init": uniform(0.0001, 0.01)
+                }
+            },
+            # Regularized Linear Models
+            "Ridge": {
+                "model": Ridge(random_state=42),
+                "params": {
+                    "alpha": uniform(0.1, 10.0)  # L2 regularization strength
+                }
+            },
+            "Lasso": {
+                "model": Lasso(random_state=42, max_iter=10000),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0)  # L1 regularization strength
+                }
+            },
+            "ElasticNet": {
+                "model": ElasticNet(random_state=42, max_iter=10000),
+                "params": {
+                    "alpha": uniform(0.0001, 1.0),  # Overall regularization strength
+                    "l1_ratio": uniform(0, 1)       # Mix between L1 and L2 (0: pure L2, 1: pure L1)
                 }
             }
         }
@@ -179,8 +192,7 @@ class EyeGlucoseModel:
             }
         if LGBMRegressor is not None:
             models["LightGBM"] = {
-                # Added verbosity=-1 to suppress LightGBM warnings.
-                "model": LGBMRegressor(random_state=42, verbosity=-1),
+                "model": LGBMRegressor(random_state=42),
                 "params": {
                     "n_estimators": randint(100, 500),
                     "learning_rate": uniform(0.01, 0.3),
@@ -225,34 +237,22 @@ class EyeGlucoseModel:
     def save_metrics_to_csv(self, best_model_name, metrics, cgm_benchmarks, best_model_details, best_model_params, filename="best_model_metrics.csv"):
         """
         Saves the best model details and performance metrics to a CSV file.
-        
-        Parameters:
-            best_model_name (str): Name of the best model.
-            metrics (dict): A dictionary containing performance metrics (e.g., R2, MSE, MAE, MARD, Sigma).
-            cgm_benchmarks (dict): A dictionary containing benchmark values for each metric.
-            best_model_details (str): String representation of the best model.
-            best_model_params (dict): Best hyperparameters of the best model.
-            filename (str): The name of the CSV file to save.
         """
-        # Create a list of dictionaries (rows) to store the details
         rows = [
             {"Metric": "Best Model Name", "Value": best_model_name, "CGM Benchmark": ""},
             {"Metric": "Best Model Details", "Value": best_model_details, "CGM Benchmark": ""}
         ]
         
-        # Add hyperparameters as rows
         rows.append({"Metric": "Best Model Hyperparameters", "Value": "", "CGM Benchmark": ""})
         for param, value in best_model_params.items():
             rows.append({"Metric": f"  {param}", "Value": value, "CGM Benchmark": ""})
         
-        # Add performance metrics and their corresponding CGM benchmarks
         rows.append({"Metric": "R²", "Value": metrics["R2"], "CGM Benchmark": cgm_benchmarks.get("R²", "")})
         rows.append({"Metric": "MSE", "Value": metrics["MSE"], "CGM Benchmark": cgm_benchmarks.get("MSE", "")})
         rows.append({"Metric": "MAE", "Value": metrics["MAE"], "CGM Benchmark": cgm_benchmarks.get("MAE", "")})
         rows.append({"Metric": "MARD", "Value": metrics["MARD"], "CGM Benchmark": cgm_benchmarks.get("MARD", "")})
         rows.append({"Metric": "Sigma Level", "Value": metrics["Sigma"], "CGM Benchmark": cgm_benchmarks.get("Sigma Level", "")})
         
-        # Convert the rows into a DataFrame and save as CSV
         df = pd.DataFrame(rows)
         df.to_csv(filename, index=False)
         logging.info(f"Best model metrics and details saved to: {filename}")
@@ -262,7 +262,7 @@ class EyeGlucoseModel:
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
         # --- Default Preprocessing Pipeline ---
-        use_poly_features = False  # Global flag (used by all models except those with custom pipelines)
+        use_poly_features = False  # Global flag (unused here)
         use_robust_scaler = False  # Change to True if needed.
         scaler = RobustScaler() if use_robust_scaler else StandardScaler()
 
@@ -279,7 +279,7 @@ class EyeGlucoseModel:
         best_mae = None
         best_mard = None
         best_sigma = None
-        best_model_params = None  # To store best hyperparameters
+        best_model_params = None
 
         models = self.get_model_configurations()
         n_iter_search = 100
