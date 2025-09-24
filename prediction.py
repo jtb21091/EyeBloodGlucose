@@ -2,15 +2,9 @@
 # Run with:  python eye_glucose_runtime.py best_model.pkl
 
 import os, cv2, numpy as np, pandas as pd, joblib, logging, time
-from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 from collections import deque
-
-# --- If matplotlib key events don't fire on macOS, uncomment the next two lines:
-# import matplotlib
-# matplotlib.use("TkAgg")
-
 import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -27,7 +21,8 @@ def get_pupil_size(img):
         if img is None or img.size == 0: return np.nan
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         g = cv2.GaussianBlur(g, (7, 7), 0)
-        circ = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50, param1=50, param2=30, minRadius=10, maxRadius=80)
+        circ = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=30,
+                                 param1=45, param2=18, minRadius=6, maxRadius=90)
         if circ is None: return np.nan
         circ = np.round(circ[0, :]).astype("int")
         return float(np.mean([r for (_, _, r) in circ]))
@@ -50,7 +45,7 @@ def get_vein_prominence(img):
     try:
         if img is None or img.size == 0: return np.nan
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        e = cv2.Canny(g, 50, 150)
+        e = cv2.Canny(g, 40, 120)
         if e.size == 0: return np.nan
         return float(round(np.sum(e)/(255.0*e.size)*10, 5))
     except Exception:
@@ -68,7 +63,7 @@ def get_scleral_vein_density(img):
     try:
         if img is None or img.size == 0: return np.nan
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        e = cv2.Canny(g, 50, 150)
+        e = cv2.Canny(g, 40, 120)
         if e.size == 0: return np.nan
         return float(round(np.sum(e)/(255.0*e.size), 5))
     except Exception:
@@ -114,9 +109,115 @@ def get_birefringence_index(img):
     except Exception:
         return np.nan
 
+# ---------- adaptive preproc ----------
+def to_gray_clahe(frame):
+    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    return clahe.apply(g)
+
+# ---------- softer-but-tight detector ----------
+class EyeDetector:
+    """
+    Prefers both eyes; accepts one eye if needed. Returns 1–2 tight rects (x,y,w,h).
+    """
+    def __init__(self):
+        base = cv2.data.haarcascades
+        self.face = cv2.CascadeClassifier(os.path.join(base, "haarcascade_frontalface_default.xml"))
+        self.eye  = cv2.CascadeClassifier(os.path.join(base, "haarcascade_eye.xml"))
+        self.glasses = cv2.CascadeClassifier(os.path.join(base, "haarcascade_eye_tree_eyeglasses.xml"))
+        if self.face.empty() or (self.eye.empty() and self.glasses.empty()):
+            logging.warning("Haar cascades not found; detection limited.")
+
+    def _trim_box(self, x,y,w,h, shrink=0.2):
+        dx, dy = int(w*shrink), int(h*shrink)
+        return (x+dx, y+dy, max(1, w-2*dx), max(1, h-2*dy))
+
+    def _detect_in_face(self, gray):
+        faces = self.face.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(90,90))
+        rects = []
+        if len(faces):
+            fx, fy, fw, fh = sorted(faces, key=lambda r: r[2]*r[3], reverse=True)[0]
+            roi = gray[fy:fy+fh, fx:fx+fw]
+            cand = []
+            if not self.eye.empty():
+                cand += list(self.eye.detectMultiScale(roi, scaleFactor=1.06, minNeighbors=3, minSize=(18,18)))
+            if not self.glasses.empty():
+                cand += list(self.glasses.detectMultiScale(roi, scaleFactor=1.05, minNeighbors=3, minSize=(18,18)))
+            for (ex,ey,ew,eh) in cand:
+                rects.append((fx+ex, fy+ey, ew, eh))
+        return rects
+
+    def _detect_full(self, gray):
+        rects = []
+        if not self.eye.empty():
+            rects += list(self.eye.detectMultiScale(gray, scaleFactor=1.06, minNeighbors=3, minSize=(16,16)))
+        if not self.glasses.empty():
+            rects += list(self.glasses.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(16,16)))
+        return rects
+
+    def _pupil_hints(self, gray):
+        g = cv2.medianBlur(gray, 5)
+        circles = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=28, param1=40, param2=16, minRadius=6, maxRadius=60)
+        rects = []
+        if circles is not None:
+            c = np.uint16(np.around(circles))[0]
+            c = sorted(c, key=lambda k: k[2], reverse=True)[:2]
+            for (x,y,r) in c:
+                s = int(r*2.8)
+                rects.append((int(x-s//2), int(y-s//2), s, s))
+        return rects
+
+    def detect_eyes(self, frame) -> List[Tuple[int,int,int,int]]:
+        if frame is None or frame.size == 0: return []
+        gray = to_gray_clahe(frame)
+
+        rects = self._detect_in_face(gray)
+        if len(rects) < 1: rects = self._detect_full(gray)
+        if len(rects) < 1: rects = self._pupil_hints(gray)
+
+        # Normalize & pick best 1–2
+        h, w = gray.shape[:2]
+        norm = []
+        for (x,y,ww,hh) in rects:
+            x1,y1 = max(0,x), max(0,y)
+            x2,y2 = min(w, x+ww), min(h, y+hh)
+            if x2>x1 and y2>y1:
+                norm.append((x1,y1,x2-x1,y2-y1))
+        norm.sort(key=lambda r: r[2]*r[3], reverse=True)
+        norm = norm[:2]
+        # tighten boxes
+        norm = [self._trim_box(*r, shrink=0.22) for r in norm]
+        # order L->R if two
+        if len(norm) == 2 and norm[0][0] > norm[1][0]:
+            norm = [norm[1], norm[0]]
+        return norm
+
+def draw_targets(frame, rects: List[Tuple[int,int,int,int]], show=True):
+    if not show: return
+    for (x,y,w,h) in rects:
+        cx, cy = x + w//2, y + h//2
+        cv2.rectangle(frame, (x,y), (x+w, y+h), (0,255,255), 2)
+        cv2.line(frame, (cx-10, cy), (cx+10, cy), (0,255,255), 2)
+        cv2.line(frame, (cx, cy-10), (cx, cy+10), (0,255,255), 2)
+        cv2.circle(frame, (cx, cy), 3, (0,255,255), -1)
+
+def union_crop(frame, rects: List[Tuple[int,int,int,int]], pad_ratio: float=0.12) -> Optional[np.ndarray]:
+    """Small image around eyes (tight union, small padding)."""
+    if frame is None or len(rects) == 0: return None
+    h, w, _ = frame.shape
+    xs = [x for (x,_,_,_) in rects]; ys = [y for (_,y,_,_) in rects]
+    xe = [x+w_ for (x,_,w_,_) in rects]; ye = [y+h_ for (_,y,_,h_) in rects]
+    x1, y1, x2, y2 = min(xs), min(ys), max(xe), max(ye)
+    pw = int((x2-x1) * pad_ratio); ph = int((y2-y1) * pad_ratio)
+    x1 = max(0, x1 - pw); y1 = max(0, y1 - ph)
+    x2 = min(w, x2 + pw); y2 = min(h, y2 + ph)
+    if x2<=x1 or y2<=y1: return None
+    return frame[y1:y2, x1:x2]
+
 @dataclass
 class Detection:
-    roi: Optional[np.ndarray] = None
+    eye_rects: List[Tuple[int,int,int,int]]
+    roi: Optional[np.ndarray]
 
 class EyeGlucoseMonitor:
     def __init__(self, model_path="best_model.pkl"):
@@ -126,7 +227,6 @@ class EyeGlucoseMonitor:
         if list(self.model.feature_names_in_) != FEATURES_ORDER:
             raise SystemExit(f"Model features {list(self.model.feature_names_in_)} do not match required 12-feature schema. Retrain.")
 
-        # Extract training means for fill
         pre = self.model.named_steps["preprocessor"]
         stats = pre.named_steps["imputer"].statistics_
         self.feature_means = {n: float(s) for n, s in zip(FEATURES_ORDER, stats)}
@@ -136,7 +236,22 @@ class EyeGlucoseMonitor:
         self.avg = deque(maxlen=200)
         self.smooth = None
         self.alpha = 0.009
-        self._stop = False  # <— stop flag set by either window
+        self._stop = False
+
+        # detection + behavior
+        self.detector = EyeDetector()
+        self.show_overlay = True
+
+        # less strict, but responsive
+        self.no_eye_grace = 2           # frames with 0 eyes before "NO EYES"
+        self.single_eye_tolerance = 30  # frames we allow operating with 1 eye
+        self.hit_streak = 0
+        self.miss_streak = 0
+        self.single_eye_frames = 0
+
+        self.eyes_mode = "none"  # "both" | "single" | "none"
+        self.last_rects: List[Tuple[int,int,int,int]] = []
+        self.last_roi = None
 
     def _load_model(self, path):
         if not os.path.exists(path): raise SystemExit(f"Model not found: {path}")
@@ -144,30 +259,59 @@ class EyeGlucoseMonitor:
         logging.info(f"Loaded model from {path}")
         return m
 
-    def _fallback_roi(self, frame):
-        h,w,_ = frame.shape
-        side = int(min(h,w)*0.35)
-        cx,cy = w//2, h//2
-        x1,y1 = max(cx-side//2,0), max(cy-side//2,0)
-        x2,y2 = min(x1+side,w), min(y1+side,h)
-        return frame[y1:y2, x1:x2]
+    def detect(self, frame) -> Detection:
+        rects = self.detector.detect_eyes(frame)  # returns 1–2 tight rects
+        n = len(rects)
 
-    def detect(self, frame):
-        # placeholder for a future detector; fallback keeps things running
-        return Detection(roi=self._fallback_roi(frame))
+        if n == 2:
+            self.hit_streak += 1; self.miss_streak = 0
+            self.eyes_mode = "both"; self.single_eye_frames = 0
+            self.last_rects = rects
+            roi = union_crop(frame, rects, pad_ratio=0.12)
+            self.last_roi = roi if roi is not None else self.last_roi
+            return Detection(eye_rects=rects, roi=roi)
 
-    def extract_features(self, frame) -> Dict[str,float]:
-        roi = self.detect(frame).roi
+        elif n == 1:
+            # allow single-eye mode for a while
+            self.hit_streak += 1; self.miss_streak = 0
+            self.single_eye_frames = min(self.single_eye_frames + 1, self.single_eye_tolerance+1)
+            self.eyes_mode = "single"
+            # pair with last known missing eye if available
+            paired = [rects[0]]
+            if len(self.last_rects) == 2:
+                # choose the last eye farther away in x as the missing partner
+                lastL, lastR = sorted(self.last_rects, key=lambda r: r[0])
+                cur = rects[0]
+                partner = lastR if abs(cur[0]-lastL[0]) < abs(cur[0]-lastR[0]) else lastL
+                paired = sorted([cur, partner], key=lambda r: r[0])
+            roi = union_crop(frame, paired, pad_ratio=0.12)
+            if roi is None and self.last_roi is not None:
+                roi = self.last_roi
+            self.last_roi = roi if roi is not None else self.last_roi
+            self.last_rects = paired if len(paired)==2 else self.last_rects
+            return Detection(eye_rects=paired, roi=roi)
+
+        else:
+            # 0 eyes
+            self.hit_streak = 0; self.miss_streak += 1
+            if self.miss_streak >= self.no_eye_grace:
+                self.eyes_mode = "none"
+                self.single_eye_frames = 0
+            return Detection(eye_rects=[], roi=None)
+
+    def extract_features(self, roi: Optional[np.ndarray]) -> Dict[str,float]:
+        if roi is None:
+            return {k: np.nan for k in FEATURES_ORDER}
         feats = {
             "pupil_size": get_pupil_size(roi),
             "sclera_redness": get_sclera_redness(roi),
             "vein_prominence": get_vein_prominence(roi),
-            "pupil_response_time": np.nan,   # single-frame fallback
+            "pupil_response_time": np.nan,
             "ir_intensity": get_ir_intensity(roi),
             "scleral_vein_density": get_scleral_vein_density(roi),
             "ir_temperature": get_ir_temperature(roi),
             "tear_film_reflectivity": get_tear_film_reflectivity(roi),
-            "pupil_dilation_rate": np.nan,   # single-frame fallback
+            "pupil_dilation_rate": np.nan,
             "sclera_color_balance": get_sclera_color_balance(roi),
             "vein_pulsation_intensity": get_vein_pulsation_intensity(roi),
             "birefringence_index": get_birefringence_index(roi)
@@ -180,8 +324,7 @@ class EyeGlucoseMonitor:
         return {k: (float(row[k]) if np.isfinite(row[k]) else self.feature_means.get(k, fallback)) for k in FEATURES_ORDER}
 
     def predict_once(self, feats: Dict[str,float]) -> float:
-        filled = self._fill(feats)
-        df = pd.DataFrame([filled], columns=FEATURES_ORDER)
+        df = pd.DataFrame([self._fill(feats)], columns=FEATURES_ORDER)
         return float(self.model.predict(df)[0])
 
     def run(self):
@@ -191,67 +334,74 @@ class EyeGlucoseMonitor:
         ls, = ax.plot([], [], label="Smoothed", color="orange")
         ax.set_xlabel("Time (s)"); ax.set_ylabel("Blood Glucose (mg/dL)"); ax.legend()
 
-        # Let the matplotlib window control the loop
-        def _on_close(event):
-            self._stop = True
+        def _on_close(event): self._stop = True
         def _on_key(event):
-            if event.key in ("escape", "q"):
-                self._stop = True
+            if event.key in ("escape", "q"): self._stop = True
+            elif event.key == "d": self.show_overlay = not self.show_overlay
         fig.canvas.mpl_connect("close_event", _on_close)
         fig.canvas.mpl_connect("key_press_event", _on_key)
 
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             print("Could not open webcam.")
-            plt.close(fig)
-            return
+            plt.close(fig); return
 
-        print("Webcam successfully opened.")
+        print("Webcam opened. Press 'd' to toggle overlay, 'q' to quit.")
         t0 = time.time()
+        smooth = None
+        alpha = self.alpha
 
         try:
             while True:
-                # Exit if matplotlib asked us to stop or the figure disappeared
-                if self._stop or not plt.fignum_exists(fig.number):
-                    break
-
+                if self._stop or not plt.fignum_exists(fig.number): break
                 ok, frame = cap.read()
-                if not ok:
-                    break
+                if not ok: break
 
-                feats = self.extract_features(frame)
-                y = self.predict_once(feats)
-                self.smooth = y if self.smooth is None else self.alpha*y + (1-self.alpha)*self.smooth
+                det = self.detect(frame)
 
-                t = time.time() - t0
-                self.time.append(t); self.inst.append(y); self.avg.append(self.smooth)
+                # decide visibility message
+                status = {
+                    "both": "Both eyes detected",
+                    "single": f"1/2 eyes (tolerating {self.single_eye_frames}/{self.single_eye_tolerance})",
+                    "none": "NO EYES DETECTED — prediction paused"
+                }[self.eyes_mode]
 
-                # Overlay numbers on the video
-                cv2.putText(frame, f"Inst: {y:.1f} mg/dL", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
-                cv2.putText(frame, f"Avg: {self.smooth:.1f} mg/dL", (10,80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
+                if det.roi is not None and self.eyes_mode in ("both", "single"):
+                    draw_targets(frame, det.eye_rects, self.show_overlay)
+                    feats = self.extract_features(det.roi)
+                    y = self.predict_once(feats)
+                    smooth = y if smooth is None else alpha*y + (1-alpha)*smooth
+
+                    t = time.time() - t0
+                    self.time.append(t); self.inst.append(y); self.avg.append(smooth)
+
+                    cv2.putText(frame, status, (10,35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0,255,255), 2)
+                    cv2.putText(frame, f"Inst: {y:.1f} mg/dL", (10,70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
+                    cv2.putText(frame, f"Avg:  {smooth:.1f} mg/dL", (10,110), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
+                else:
+                    msg = status
+                    (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                    cv2.rectangle(frame, (10, 10), (10+tw+10, 10+th+10), (0,0,255), -1)
+                    cv2.putText(frame, msg, (15, 10+th+3), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
+
+                # overlay hint
+                cv2.putText(frame, f"Overlay: {'ON' if self.show_overlay else 'OFF'} (press 'd')",
+                            (10, frame.shape[0]-15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 1)
+
                 cv2.imshow("Blood Glucose", frame)
 
-                # Update plot
-                li.set_data(self.time, self.inst)
-                ls.set_data(self.time, self.avg)
+                # update plot
+                li.set_data(self.time, self.inst); ls.set_data(self.time, self.avg)
                 ax.relim(); ax.autoscale_view()
                 fig.canvas.draw(); fig.canvas.flush_events()
 
-                # Exit if OpenCV window gets a key or is closed
                 if (cv2.waitKey(1) in (ord('q'), 27)) or (cv2.getWindowProperty("Blood Glucose", cv2.WND_PROP_VISIBLE) < 1):
                     break
-
-                # Keep matplotlib responsive
                 plt.pause(0.001)
         finally:
-            # Clean shutdown
-            cap.release()
-            cv2.destroyAllWindows()
-            try:
-                plt.ioff()
-                plt.close(fig)  # don't block; just close
-            except Exception:
-                pass
+            cap.release(); cv2.destroyAllWindows()
+            try: plt.ioff(); plt.close(fig)
+            except Exception: pass
 
 if __name__ == "__main__":
     import sys
