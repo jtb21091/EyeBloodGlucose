@@ -1,4 +1,9 @@
-# Video/vision
+# ======================
+# EyeBloodGlucose / Cherry ML Environment
+# Tested Python 3.9–3.11 (macOS)
+# ======================
+
+# Video / vision
 opencv-contrib-python==4.10.0.84
 
 # Core scientific stack (NumPy 1.x line for MediaPipe compatibility)
@@ -24,13 +29,14 @@ h5py==3.11.0
 mediapipe==0.10.21
 protobuf==4.25.3
 
-# TF/Keras (still on the protobuf<5, NumPy<2 line)
+# TensorFlow/Keras (for any deep learning or feature extraction)
 tensorflow==2.15.0
 keras==2.15.0
 
-# Apple export
+# Apple / CoreML export (optional; can comment if builds fail)
 coremltools==8.3
-# (Optional, often tricky on macOS without conda; comment out if it causes build issues)
 
-# Optional: PyTorch (commented – wheels may not exist for your macOS/Python combo)
-# torch==2.3.1
+# ONNX conversion and runtime (for browser / serverless inference)
+skl2onnx==1.17.0
+onnx==1.17.0
+onnxruntime==1.19.2
