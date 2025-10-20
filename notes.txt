@@ -1,2 +1,8 @@
 Update mean to median in prediction?
 Move far off in the training or filter them out?
+
+# Monthly update:
+git lfs install  # if you uninstalled it
+git add -f best_model.pkl
+git commit -m "Update model with new data"
+git push
