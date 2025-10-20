@@ -64,10 +64,15 @@ async def predict(file: UploadFile = File(...)):
     try:
         feats = monitor.extract_features(det.roi)          # dict of 12 features
         y = monitor.predict_once(feats)                    # mg/dL
+        
+        # Convert NaN values to None for JSON compatibility
+        feats_clean = {k: (None if np.isnan(v) or np.isinf(v) else float(v)) 
+                       for k, v in feats.items()}
+        
         return {
             "estimate_mg_dl": float(round(y, 2)),
             "mode": monitor.eyes_mode,                     # "both" | "single"
-            "features": feats                              # optional: handy for debugging
+            "features": feats_clean                        # optional: handy for debugging
         }
     except Exception as e:
         logging.exception("Inference failed")
