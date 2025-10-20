@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>EyeBloodGlucose — Live Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; }
+    #panel { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+    video, canvas { border: 1px solid #ddd; border-radius: 8px; }
+    button { padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h2>EyeBloodGlucose — Local Demo</h2>
+  <p>Real-time webcam prototype — not medical advice.</p>
+
+  <div id="panel">
+    <div>
+      <video id="video" width="320" height="240" autoplay muted playsinline></video><br/>
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+      <div style="margin-top:8px;color:#666">Sending 1 frame/second to backend</div>
+    </div>
+
+    <div>
+      <canvas id="canvas" width="224" height="224"></canvas>
+      <div style="font-size:12px;color:#666;margin-top:6px">Captured frame</div>
+    </div>
+
+    <div style="min-width:220px">
+      <div style="padding:12px;border:1px solid #eee;border-radius:8px">
+        <div><strong>Predicted glucose:</strong></div>
+        <div id="out" style="font-size:28px;margin-top:6px">—</div>
+        <div id="msg" style="font-size:12px;color:#666;margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = "http://127.0.0.1:8000/predict";
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const out = document.getElementById('out');
+const msg = document.getElementById('msg');
+const startBtn = document.getElementById('start');
+const stopBtn  = document.getElementById('stop');
+
+let timer = null;
+const W = 224, H = 224;
+
+async function startCam() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  video.srcObject = stream;
+}
+
+function frameToBlob() {
+  ctx.drawImage(video, 0, 0, W, H);
+  return new Promise(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.9));
+}
+
+async function sendFrame() {
+  try {
+    const blob = await frameToBlob();
+    const fd = new FormData();
+    fd.append('file', new File([blob], 'frame.jpg', { type: 'image/jpeg' }));
+    msg.textContent = 'Predicting…';
+    const r = await fetch(API, { method: 'POST', body: fd });
+    const j = await r.json();
+    out.textContent = `${(+j.estimate_mg_dl).toFixed(1)} mg/dL`;
+    msg.textContent = '';
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+}
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true; stopBtn.disabled = false;
+  await startCam();
+  timer = setInterval(sendFrame, 1000);
+};
+
+stopBtn.onclick = () => {
+  startBtn.disabled = false; stopBtn.disabled = true;
+  if (timer) clearInterval(timer);
+  const s = video.srcObject;
+  if (s) s.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+};
+</script>
+</body>
+</html>
