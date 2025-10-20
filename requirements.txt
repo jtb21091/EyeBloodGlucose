@@ -40,3 +40,7 @@ coremltools==8.3
 skl2onnx==1.17.0
 onnx==1.17.0
 onnxruntime==1.19.2
+
+fastapi==0.95.2
+uvicorn==0.22.0
+python-multipart==0.0.6
