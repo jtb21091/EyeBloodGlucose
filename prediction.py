@@ -109,16 +109,20 @@ def get_birefringence_index(img):
     except Exception:
         return np.nan
 
-# ---------- adaptive preproc ----------
+# ---------- improved adaptive preproc ----------
 def to_gray_clahe(frame):
     g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    # Add histogram equalization for better contrast
+    g = cv2.equalizeHist(g)
+    # Enhanced CLAHE with higher clip limit
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
     return clahe.apply(g)
 
-# ---------- softer-but-tight detector ----------
+# ---------- improved detector ----------
 class EyeDetector:
     """
-    Prefers both eyes; accepts one eye if needed. Returns 1–2 tight rects (x,y,w,h).
+    Enhanced detector with better tolerance for glasses and varied lighting.
+    Prefers both eyes; accepts one eye if needed. Returns 1-2 tight rects (x,y,w,h).
     """
     def __init__(self):
         base = cv2.data.haarcascades
@@ -133,37 +137,42 @@ class EyeDetector:
         return (x+dx, y+dy, max(1, w-2*dx), max(1, h-2*dy))
 
     def _detect_in_face(self, gray):
-        faces = self.face.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(90,90))
+        # More lenient face detection
+        faces = self.face.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(60,60))
         rects = []
         if len(faces):
             fx, fy, fw, fh = sorted(faces, key=lambda r: r[2]*r[3], reverse=True)[0]
             roi = gray[fy:fy+fh, fx:fx+fw]
             cand = []
-            if not self.eye.empty():
-                cand += list(self.eye.detectMultiScale(roi, scaleFactor=1.06, minNeighbors=3, minSize=(18,18)))
+            # Try glasses cascade first (better for glasses wearers)
             if not self.glasses.empty():
-                cand += list(self.glasses.detectMultiScale(roi, scaleFactor=1.05, minNeighbors=3, minSize=(18,18)))
+                cand += list(self.glasses.detectMultiScale(roi, scaleFactor=1.03, minNeighbors=2, minSize=(16,16)))
+            if not self.eye.empty():
+                cand += list(self.eye.detectMultiScale(roi, scaleFactor=1.05, minNeighbors=2, minSize=(16,16)))
             for (ex,ey,ew,eh) in cand:
                 rects.append((fx+ex, fy+ey, ew, eh))
         return rects
 
     def _detect_full(self, gray):
         rects = []
-        if not self.eye.empty():
-            rects += list(self.eye.detectMultiScale(gray, scaleFactor=1.06, minNeighbors=3, minSize=(16,16)))
+        # More lenient full-frame detection
         if not self.glasses.empty():
-            rects += list(self.glasses.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(16,16)))
+            rects += list(self.glasses.detectMultiScale(gray, scaleFactor=1.04, minNeighbors=2, minSize=(14,14)))
+        if not self.eye.empty():
+            rects += list(self.eye.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=2, minSize=(14,14)))
         return rects
 
     def _pupil_hints(self, gray):
         g = cv2.medianBlur(gray, 5)
-        circles = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=28, param1=40, param2=16, minRadius=6, maxRadius=60)
+        # More sensitive pupil detection
+        circles = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=25, 
+                                   param1=35, param2=14, minRadius=5, maxRadius=70)
         rects = []
         if circles is not None:
             c = np.uint16(np.around(circles))[0]
             c = sorted(c, key=lambda k: k[2], reverse=True)[:2]
             for (x,y,r) in c:
-                s = int(r*2.8)
+                s = int(r*3.0)  # Slightly larger box
                 rects.append((int(x-s//2), int(y-s//2), s, s))
         return rects
 
@@ -175,7 +184,7 @@ class EyeDetector:
         if len(rects) < 1: rects = self._detect_full(gray)
         if len(rects) < 1: rects = self._pupil_hints(gray)
 
-        # Normalize & pick best 1–2
+        # Normalize & pick best 1-2
         h, w = gray.shape[:2]
         norm = []
         for (x,y,ww,hh) in rects:
@@ -185,8 +194,8 @@ class EyeDetector:
                 norm.append((x1,y1,x2-x1,y2-y1))
         norm.sort(key=lambda r: r[2]*r[3], reverse=True)
         norm = norm[:2]
-        # tighten boxes
-        norm = [self._trim_box(*r, shrink=0.22) for r in norm]
+        # tighten boxes slightly less aggressively
+        norm = [self._trim_box(*r, shrink=0.18) for r in norm]
         # order L->R if two
         if len(norm) == 2 and norm[0][0] > norm[1][0]:
             norm = [norm[1], norm[0]]
@@ -242,9 +251,9 @@ class EyeGlucoseMonitor:
         self.detector = EyeDetector()
         self.show_overlay = True
 
-        # less strict, but responsive
-        self.no_eye_grace = 2           # frames with 0 eyes before "NO EYES"
-        self.single_eye_tolerance = 30  # frames we allow operating with 1 eye
+        # More lenient tolerance
+        self.no_eye_grace = 3           # frames with 0 eyes before "NO EYES" (was 2)
+        self.single_eye_tolerance = 60  # frames we allow operating with 1 eye (was 30)
         self.hit_streak = 0
         self.miss_streak = 0
         self.single_eye_frames = 0
@@ -260,7 +269,7 @@ class EyeGlucoseMonitor:
         return m
 
     def detect(self, frame) -> Detection:
-        rects = self.detector.detect_eyes(frame)  # returns 1–2 tight rects
+        rects = self.detector.detect_eyes(frame)  # returns 1-2 tight rects
         n = len(rects)
 
         if n == 2:
