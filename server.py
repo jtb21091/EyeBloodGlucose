@@ -8,9 +8,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- import your runtime (you pasted this earlier) ---
-# It must be in the same folder as server.py
-from eye_glucose_runtime import EyeGlucoseMonitor  # uses detector + 12 feature extractors
+# --- import from prediction.py (your existing file) ---
+from prediction import EyeGlucoseMonitor  # uses detector + 12 feature extractors
 
 MODEL_PATH = os.getenv("MODEL_PATH", "best_model.pkl")
 
