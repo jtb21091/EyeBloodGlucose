@@ -161,8 +161,118 @@ def get_ir_temperature(image):
     return round(temperature, 10)
 
 
-def measure_pupil_response_time(cap):
-    """Track pupil size over multiple frames to estimate response time."""
+def get_lens_clarity_score(image):
+    """
+    Measure lens opacity/clarity score.
+    Higher values indicate more clarity/less opacity.
+    Diabetes can cause lens changes over time.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    # Focus on central region (approximate lens area)
+    center_y_start, center_y_end = h // 3, 2 * h // 3
+    center_x_start, center_x_end = w // 3, 2 * w // 3
+    center = gray[center_y_start:center_y_end, center_x_start:center_x_end]
+    
+    if center.size == 0:
+        return 0.0
+    
+    clarity = np.std(center) / (np.mean(center) + 1e-5)
+    return round(clarity, 10)
+
+
+def get_sclera_yellowness(image):
+    """
+    Measure yellowish tint in sclera using LAB color space.
+    Can indicate metabolic changes or jaundice.
+    The b channel in LAB represents yellow-blue axis.
+    """
+    try:
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        b_channel = lab[:, :, 2]  # Yellow-blue axis (higher = more yellow)
+        yellowness = np.mean(b_channel)
+        return round(yellowness, 10)
+    except Exception as e:
+        logging.warning("Error calculating sclera yellowness: %s", e)
+        return 0.0
+
+
+def get_vessel_tortuosity(image):
+    """
+    Estimate blood vessel tortuosity (twistedness) using edge curvature analysis.
+    High glucose levels can increase vessel tortuosity.
+    Uses edge detection and analyzes local curvature.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply bilateral filter to reduce noise while preserving edges
+    filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+    
+    # Detect edges with stricter thresholds for vessel detection
+    edges = cv2.Canny(filtered, 30, 90)
+    
+    # Find contours representing vessels
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    
+    if not contours:
+        return 0.0
+    
+    # Calculate tortuosity for each contour
+    tortuosity_scores = []
+    for contour in contours:
+        if len(contour) > 10:  # Need sufficient points
+            # Calculate arc length
+            arc_length = cv2.arcLength(contour, False)
+            
+            # Calculate chord length (straight line distance)
+            if len(contour) >= 2:
+                start_point = contour[0][0]
+                end_point = contour[-1][0]
+                chord_length = np.linalg.norm(start_point - end_point)
+                
+                # Tortuosity = arc_length / chord_length
+                # (1.0 = perfectly straight, higher = more tortuous)
+                if chord_length > 0:
+                    tortuosity = arc_length / (chord_length + 1e-5)
+                    tortuosity_scores.append(tortuosity)
+    
+    if tortuosity_scores:
+        # Return mean tortuosity across all detected vessels
+        mean_tortuosity = np.mean(tortuosity_scores)
+        return round(mean_tortuosity, 10)
+    else:
+        return 0.0
+
+
+def get_image_quality_score(image):
+    """
+    Calculate composite image quality metric.
+    Combines blur, brightness, and contrast into a single score.
+    Higher scores indicate better quality images.
+    """
+    _, blur_var = is_blurry(image)
+    brightness = np.mean(image)
+    contrast = np.std(image)
+    
+    # Normalize each component (with reasonable expected ranges)
+    blur_score = min(blur_var / 100.0, 1.0)  # 100+ is good
+    brightness_score = 1.0 - abs(brightness - 128) / 128.0  # 128 is ideal
+    contrast_score = min(contrast / 50.0, 1.0)  # 50+ is good
+    
+    # Composite quality (0-1 scale, then scaled to 0-100)
+    quality = (blur_score + brightness_score + contrast_score) / 3.0 * 100
+    
+    logging.debug("Image quality - Blur: %.2f, Brightness: %.2f, Contrast: %.2f, Overall: %.2f", 
+                  blur_score * 100, brightness_score * 100, contrast_score * 100, quality)
+    
+    return round(quality, 10)
+
+
+def measure_capture_duration(cap):
+    """
+    Measure the time duration to capture 10 frames.
+    Renamed from pupil_response_time for accuracy.
+    """
     pupil_sizes = []
     start_time = time.time()
     
@@ -178,8 +288,8 @@ def measure_pupil_response_time(cap):
     if len(pupil_sizes) < 2:
         return None
     
-    response_time = round(time.time() - start_time, 10)
-    return response_time
+    duration = round(time.time() - start_time, 10)
+    return duration
 
 
 def extract_eye_roi(frame):
@@ -266,9 +376,9 @@ def capture_and_measure():
             # Extract eye ROI
             roi = extract_eye_roi(frame)
             
-            # Measure pupil response time (needs camera still open)
-            logging.info("Measuring pupil response time...")
-            pupil_response_time = measure_pupil_response_time(cap)
+            # Measure capture duration (needs camera still open)
+            logging.info("Measuring capture duration...")
+            capture_duration = measure_capture_duration(cap)
             
             # Save the ROI
             file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
@@ -281,15 +391,18 @@ def capture_and_measure():
                 'pupil_size': get_pupil_size(roi),
                 'sclera_redness': get_sclera_redness(roi),
                 'vein_prominence': get_vein_prominence(roi),
-                'pupil_response_time': pupil_response_time,
+                'capture_duration': capture_duration,
                 'ir_intensity': get_ir_intensity(roi),
                 'scleral_vein_density': get_scleral_vein_density(roi),
                 'ir_temperature': get_ir_temperature(roi),
                 'tear_film_reflectivity': get_tear_film_reflectivity(roi),
-                'pupil_dilation_rate': get_pupil_size(roi),  # Same as pupil_size
                 'sclera_color_balance': get_sclera_color_balance(roi),
                 'vein_pulsation_intensity': get_vein_pulsation_intensity(roi),
-                'birefringence_index': get_birefringence_index(roi)
+                'birefringence_index': get_birefringence_index(roi),
+                'lens_clarity_score': get_lens_clarity_score(roi),
+                'sclera_yellowness': get_sclera_yellowness(roi),
+                'vessel_tortuosity': get_vessel_tortuosity(roi),
+                'image_quality_score': get_image_quality_score(roi)
             }
             
             return file_name, measurements
@@ -313,25 +426,29 @@ def update_data():
     filename, measurements = result
     
     new_entry = pd.DataFrame([[
-        filename, "", 
+        filename, "",
         measurements['pupil_size'],
         measurements['sclera_redness'],
         measurements['vein_prominence'],
-        measurements['pupil_response_time'],
+        measurements['capture_duration'],
         measurements['ir_intensity'],
         measurements['scleral_vein_density'],
         measurements['ir_temperature'],
         measurements['tear_film_reflectivity'],
-        measurements['pupil_dilation_rate'],
         measurements['sclera_color_balance'],
         measurements['vein_pulsation_intensity'],
-        measurements['birefringence_index']
+        measurements['birefringence_index'],
+        measurements['lens_clarity_score'],
+        measurements['sclera_yellowness'],
+        measurements['vessel_tortuosity'],
+        measurements['image_quality_score']
     ]], columns=[
         'filename', 'blood_glucose', 'pupil_size', 'sclera_redness',
-        'vein_prominence', 'pupil_response_time', 'ir_intensity',
+        'vein_prominence', 'capture_duration', 'ir_intensity',
         'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
-        'pupil_dilation_rate', 'sclera_color_balance', 'vein_pulsation_intensity',
-        'birefringence_index'
+        'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
+        'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity',
+        'image_quality_score'
     ])
 
     # Use append mode so that each run adds a new row
@@ -343,7 +460,8 @@ def update_data():
         logging.info("Appended new data to CSV: %s", filename)
     
     print(f"\n✓ Capture complete! Image saved as: {filename}")
-    print("Remember to add your blood glucose reading to the CSV file.")
+    print(f"✓ Image quality score: {measurements['image_quality_score']:.1f}/100")
+    print("\nRemember to add your blood glucose reading to the CSV file.")
 
 
 if __name__ == "__main__":
