@@ -2,8 +2,10 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import cv2, numpy as np, joblib, io, os, requests
-from typing import Dict
+from typing import Dict, Optional, List
 import logging
+from sklearn.base import BaseEstimator, TransformerMixin
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,6 +15,89 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # Download model from GitHub Release if not present
 MODEL_PATH = "best_model.pkl"
 MODEL_URL = "https://github.com/jtb21091/EyeBloodGlucose/releases/download/v1.0.0/best_model.pkl"
+
+# UPDATED FEATURES ORDER - 15 features to match new training.py
+FEATURES_ORDER = [
+    'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
+    'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
+    'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
+    'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
+]
+
+# ===== FEATURE ENGINEER CLASS - MUST BE DEFINED BEFORE MODEL LOADING =====
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    """
+    Creates engineered features:
+    - Ratios between key features
+    - Polynomial interactions
+    - Domain-specific combinations
+    """
+    def __init__(self, add_ratios: bool = True, add_interactions: bool = True, add_polynomials: bool = True):
+        self.add_ratios = add_ratios
+        self.add_interactions = add_interactions
+        self.add_polynomials = add_polynomials
+        self.feature_names_: Optional[List[str]] = None
+        
+    def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None):
+        return self
+    
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        X_df = pd.DataFrame(X, columns=FEATURES_ORDER)
+        X_new = X_df.copy()
+        
+        if self.add_ratios:
+            # Vascular ratios
+            X_new['vein_to_redness_ratio'] = X_df['vein_prominence'] / (X_df['sclera_redness'] + 1e-6)
+            X_new['density_to_prominence_ratio'] = X_df['scleral_vein_density'] / (X_df['vein_prominence'] + 1e-6)
+            
+            # Optical ratios
+            X_new['ir_to_reflectivity_ratio'] = X_df['ir_intensity'] / (X_df['tear_film_reflectivity'] + 1e-6)
+            X_new['clarity_to_yellowness_ratio'] = X_df['lens_clarity_score'] / (X_df['sclera_yellowness'] + 1e-6)
+            
+            # Pupil ratios
+            X_new['pupil_to_duration_ratio'] = X_df['pupil_size'] / (X_df['capture_duration'] + 1e-6)
+            
+            # Quality ratios
+            X_new['quality_to_tortuosity_ratio'] = X_df['image_quality_score'] / (X_df['vessel_tortuosity'] + 1e-6)
+        
+        if self.add_interactions:
+            # Vascular health composite
+            X_new['vascular_health_index'] = (
+                X_df['vein_prominence'] * X_df['scleral_vein_density'] * X_df['vein_pulsation_intensity']
+            ) ** (1/3)  # Geometric mean
+            
+            # Scleral quality composite
+            X_new['scleral_quality_index'] = (
+                X_df['sclera_redness'] * X_df['sclera_color_balance'] * X_df['sclera_yellowness']
+            ) ** (1/3)
+            
+            # IR composite
+            X_new['ir_thermal_index'] = X_df['ir_intensity'] * X_df['ir_temperature']
+            
+            # Optical clarity composite
+            X_new['optical_clarity_index'] = (
+                X_df['lens_clarity_score'] * X_df['tear_film_reflectivity'] * X_df['birefringence_index']
+            ) ** (1/3)
+            
+            # Pupil response composite
+            X_new['pupil_response_index'] = X_df['pupil_size'] * X_df['capture_duration']
+            
+            # Vessel dynamics
+            X_new['vessel_dynamics_index'] = X_df['vessel_tortuosity'] * X_df['vein_pulsation_intensity']
+        
+        if self.add_polynomials:
+            # Square key features that may have non-linear relationships
+            key_features = ['pupil_size', 'sclera_redness', 'vein_prominence', 'ir_intensity', 'lens_clarity_score']
+            for feat in key_features:
+                if feat in X_df.columns:
+                    X_new[f'{feat}_squared'] = X_df[feat] ** 2
+        
+        self.feature_names_ = list(X_new.columns)
+        return X_new.values
+    
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        return self.feature_names_ if self.feature_names_ is not None else FEATURES_ORDER
+# ===== END OF FEATURE ENGINEER CLASS =====
 
 def download_model():
     """Download model from GitHub Release if not present locally"""
@@ -37,14 +122,6 @@ def download_model():
 download_model()
 model = joblib.load(MODEL_PATH)
 logging.info("Model loaded successfully")
-
-# UPDATED FEATURES ORDER - 15 features to match new training.py
-FEATURES_ORDER = [
-    'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
-    'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
-    'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
-    'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
-]
 
 @app.get("/")
 async def read_root():
@@ -296,7 +373,6 @@ async def predict(file: UploadFile = File(...)):
             feats[k] = means.get(k, 100.0)
     
     # Predict
-    import pandas as pd
     df = pd.DataFrame([feats], columns=FEATURES_ORDER)
     pred = float(model.predict(df)[0])
     
