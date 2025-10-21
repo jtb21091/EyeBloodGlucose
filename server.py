@@ -84,7 +84,7 @@ MODEL_PATH = "best_model.pkl"
 MODEL_URL = "https://github.com/jtb21091/EyeBloodGlucose/releases/download/v1.0.0/best_model.pkl"
 
 # 🚨 Replace this with the real SHA-256 of best_model.pkl
-EXPECTED_SHA256 = "PUT_YOUR_MODEL_SHA256_HERE"
+EXPECTED_SHA256 = "322b5af10add1ea7d16ae2e0cbb3d9a922143f22643fe6023c9de13a5ace875c"
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
