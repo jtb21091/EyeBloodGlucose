@@ -24,21 +24,61 @@ EDGE_HIGH_THRESHOLD = 50
 # Camera settings
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
-WARMUP_FRAMES = 20
+WARMUP_FRAMES = 30  # Increased for better auto-adjustment
 
 # Initialize Mediapipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
 
 
+def adjust_camera_settings(cap):
+    """Optimize camera settings for better image quality."""
+    try:
+        # Try to set auto exposure (may not work on all cameras)
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
+        cap.set(cv2.CAP_PROP_EXPOSURE, -5)  # Adjust exposure
+    except:
+        logging.debug("Could not set exposure settings")
+    
+    try:
+        # Increase brightness
+        cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.6)
+    except:
+        logging.debug("Could not set brightness")
+    
+    try:
+        # Adjust contrast
+        cap.set(cv2.CAP_PROP_CONTRAST, 0.5)
+    except:
+        logging.debug("Could not set contrast")
+    
+    try:
+        # Increase saturation (helps with color features)
+        cap.set(cv2.CAP_PROP_SATURATION, 0.6)
+    except:
+        logging.debug("Could not set saturation")
+    
+    try:
+        # Enable autofocus if supported
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+    except:
+        logging.debug("Could not set autofocus")
+    
+    logging.debug("Camera settings optimization attempted")
+
+
 @contextmanager
 def open_camera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
-    """Context manager for safe camera access."""
+    """Context manager for safe camera access with optimized settings."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Could not open webcam")
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    
+    # Apply camera optimizations
+    adjust_camera_settings(cap)
+    
     logging.debug("Camera resolution set to: %.0f x %.0f",
                   cap.get(cv2.CAP_PROP_FRAME_WIDTH), 
                   cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -48,6 +88,38 @@ def open_camera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
     finally:
         cap.release()
         logging.debug("Camera released")
+
+
+def enhance_roi(roi):
+    """Apply image enhancements to improve quality."""
+    if roi is None or roi.size == 0:
+        return roi
+    
+    try:
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8,8))
+        l = clahe.apply(l)
+        
+        enhanced = cv2.merge([l, a, b])
+        enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        
+        # Sharpen the image slightly
+        kernel = np.array([[-0.5,-0.5,-0.5],
+                           [-0.5, 5,-0.5],
+                           [-0.5,-0.5,-0.5]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+        
+        # Denoise while preserving details
+        denoised = cv2.fastNlMeansDenoisingColored(sharpened, None, 6, 6, 7, 21)
+        
+        logging.debug("ROI enhancement applied successfully")
+        return denoised
+    except Exception as e:
+        logging.warning(f"Error enhancing ROI: {e}. Using original.")
+        return roi
 
 
 def is_blurry(image, threshold=100.0):
@@ -296,6 +368,7 @@ def extract_eye_roi(frame):
     """
     Extract the eye region (ROI) from a frame using Mediapipe Face Mesh.
     Returns the ROI and logs any quality warnings.
+    IMPROVED: Larger padding for better context.
     """
     if np.mean(frame) < 10:
         logging.warning("Captured frame is very dark. Check your lighting conditions.")
@@ -324,10 +397,11 @@ def extract_eye_roi(frame):
             y_coords.append(int(lm.y * ih))
         
         if x_coords and y_coords:
-            x_min = max(min(x_coords) - 5, 0)
-            x_max = min(max(x_coords) + 5, iw)
-            y_min = max(min(y_coords) - 5, 0)
-            y_max = min(max(y_coords) + 5, ih)
+            # IMPROVED: Increased padding from 5 to 30 pixels for better context
+            x_min = max(min(x_coords) - 30, 0)
+            x_max = min(max(x_coords) + 30, iw)
+            y_min = max(min(y_coords) - 30, 0)
+            y_max = min(max(y_coords) + 30, ih)
             roi = frame[y_min:y_max, x_min:x_max]
             
             if roi.size == 0:
@@ -351,11 +425,12 @@ def capture_and_measure():
     """
     Capture eye images and perform all measurements in a single camera session.
     Returns filename, roi, and all measurements.
+    IMPROVED: Enhanced image quality processing.
     """
     try:
         with open_camera() as cap:
-            # Warm up camera
-            logging.info("Warming up camera...")
+            # Warm up camera (increased frames for better auto-adjustment)
+            logging.info("Warming up camera for optimal settings...")
             frame = None
             for i in range(WARMUP_FRAMES):
                 ret, temp_frame = cap.read()
@@ -376,33 +451,37 @@ def capture_and_measure():
             # Extract eye ROI
             roi = extract_eye_roi(frame)
             
+            # IMPROVED: Enhance the ROI before processing
+            roi_enhanced = enhance_roi(roi)
+            
             # Measure capture duration (needs camera still open)
             logging.info("Measuring capture duration...")
             capture_duration = measure_capture_duration(cap)
             
-            # Save the ROI
+            # Save the enhanced ROI with maximum quality
             file_name = f"eye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
             file_path = os.path.join(IMAGE_DIR, file_name)
-            cv2.imwrite(file_path, roi)
-            logging.info("Captured eye ROI image: %s", file_name)
+            # IMPROVED: Save with no compression for maximum quality
+            cv2.imwrite(file_path, roi_enhanced, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+            logging.info("Captured enhanced eye ROI image: %s", file_name)
             
-            # Compute all measurements from the ROI
+            # Compute all measurements from the enhanced ROI
             measurements = {
-                'pupil_size': get_pupil_size(roi),
-                'sclera_redness': get_sclera_redness(roi),
-                'vein_prominence': get_vein_prominence(roi),
+                'pupil_size': get_pupil_size(roi_enhanced),
+                'sclera_redness': get_sclera_redness(roi_enhanced),
+                'vein_prominence': get_vein_prominence(roi_enhanced),
                 'capture_duration': capture_duration,
-                'ir_intensity': get_ir_intensity(roi),
-                'scleral_vein_density': get_scleral_vein_density(roi),
-                'ir_temperature': get_ir_temperature(roi),
-                'tear_film_reflectivity': get_tear_film_reflectivity(roi),
-                'sclera_color_balance': get_sclera_color_balance(roi),
-                'vein_pulsation_intensity': get_vein_pulsation_intensity(roi),
-                'birefringence_index': get_birefringence_index(roi),
-                'lens_clarity_score': get_lens_clarity_score(roi),
-                'sclera_yellowness': get_sclera_yellowness(roi),
-                'vessel_tortuosity': get_vessel_tortuosity(roi),
-                'image_quality_score': get_image_quality_score(roi)
+                'ir_intensity': get_ir_intensity(roi_enhanced),
+                'scleral_vein_density': get_scleral_vein_density(roi_enhanced),
+                'ir_temperature': get_ir_temperature(roi_enhanced),
+                'tear_film_reflectivity': get_tear_film_reflectivity(roi_enhanced),
+                'sclera_color_balance': get_sclera_color_balance(roi_enhanced),
+                'vein_pulsation_intensity': get_vein_pulsation_intensity(roi_enhanced),
+                'birefringence_index': get_birefringence_index(roi_enhanced),
+                'lens_clarity_score': get_lens_clarity_score(roi_enhanced),
+                'sclera_yellowness': get_sclera_yellowness(roi_enhanced),
+                'vessel_tortuosity': get_vessel_tortuosity(roi_enhanced),
+                'image_quality_score': get_image_quality_score(roi_enhanced)
             }
             
             return file_name, measurements
@@ -461,6 +540,7 @@ def update_data():
     
     print(f"\n✓ Capture complete! Image saved as: {filename}")
     print(f"✓ Image quality score: {measurements['image_quality_score']:.1f}/100")
+    print("\n💡 Tip: For best results, ensure good lighting and look directly at the camera")
     print("\nRemember to add your blood glucose reading to the CSV file.")
 
 
