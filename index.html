@@ -19,8 +19,20 @@
       gap: 20px;
     }
     
-    #videoContainer { position: relative; width: 100%; max-width: 640px; aspect-ratio: 4/3; }
-    video { border: 2px solid #ddd; border-radius: 8px; width: 100%; height: 100%; }
+    #videoContainer { 
+      position: relative; 
+      width: 100%; 
+      max-width: 640px; 
+      aspect-ratio: 4/3;
+      background: #000;
+    }
+    video { 
+      border: 2px solid #ddd; 
+      border-radius: 8px; 
+      width: 100%; 
+      height: 100%;
+      display: block;
+    }
     #overlay { 
       position: absolute; 
       top: 0; 
@@ -148,8 +160,8 @@
   <div id="panel">
     <div class="left-column">
       <div id="videoContainer">
-        <video id="video" width="640" height="480" autoplay muted playsinline></video>
-        <canvas id="overlay" width="640" height="480"></canvas>
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
       </div>
       <button id="start">Start</button>
       <button id="stop" disabled>Stop</button>
@@ -159,7 +171,7 @@
     <div class="right-column">
       <div class="glucose-box">
         <div><strong>Predicted glucose:</strong></div>
-        <div id="out" style="font-size:32px;margin-top:6px">–</div>
+        <div id="out" style="font-size:32px;margin-top:6px">—</div>
         <div id="status" style="display:none;"></div>
         <div id="msg" style="font-size:12px;color:#666;margin-top:6px"></div>
       </div>
@@ -217,6 +229,17 @@ let currentEyes = [];
 
 let glucoseData = [];
 let chart = null;
+
+// Sync canvas size with video display size
+function resizeCanvas() {
+  const rect = video.getBoundingClientRect();
+  overlay.width = rect.width;
+  overlay.height = rect.height;
+}
+
+// Call resize when video metadata loads and on window resize
+video.addEventListener('loadedmetadata', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
 
 function initChart() {
   const ctx = document.getElementById('chartCanvas').getContext('2d');
@@ -397,16 +420,27 @@ function drawEyeBoxes() {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
   
   if (currentEyes.length === 2) {
+    // Calculate scaling factors
+    const scaleX = overlay.width / 640;
+    const scaleY = overlay.height / 480;
+    
     // Draw green boxes around detected eyes
     overlayCtx.strokeStyle = '#00ff00';
     overlayCtx.lineWidth = 3;
+    overlayCtx.fillStyle = '#00ff00';
     
     currentEyes.forEach(eye => {
-      const cx = eye.x + eye.w / 2;
-      const cy = eye.y + eye.h / 2;
+      // Scale coordinates to match actual canvas size
+      const x = eye.x * scaleX;
+      const y = eye.y * scaleY;
+      const w = eye.w * scaleX;
+      const h = eye.h * scaleY;
+      
+      const cx = x + w / 2;
+      const cy = y + h / 2;
       
       // Rectangle
-      overlayCtx.strokeRect(eye.x, eye.y, eye.w, eye.h);
+      overlayCtx.strokeRect(x, y, w, h);
       
       // Crosshair
       overlayCtx.beginPath();
@@ -417,7 +451,6 @@ function drawEyeBoxes() {
       overlayCtx.stroke();
       
       // Center dot
-      overlayCtx.fillStyle = '#00ff00';
       overlayCtx.beginPath();
       overlayCtx.arc(cx, cy, 4, 0, 2 * Math.PI);
       overlayCtx.fill();
@@ -456,6 +489,15 @@ async function startCam() {
     audio: false 
   });
   video.srcObject = stream;
+  
+  // Wait for video to be ready and resize canvas
+  await new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      video.play();
+      resizeCanvas();
+      resolve();
+    };
+  });
 }
 
 function frameToBlob() {
@@ -487,7 +529,7 @@ async function sendFrame() {
     } else {
       // Eyes closed or not detected
       currentEyes = [];
-      out.textContent = '–';
+      out.textContent = '—';
       status.style.display = 'none';
       msg.textContent = 'Eyes closed or not detected - no prediction';
       msg.style.color = '#ef4444';
@@ -496,7 +538,7 @@ async function sendFrame() {
   } catch (e) {
     msg.textContent = e.message;
     msg.style.color = '#ef4444';
-    out.textContent = '–';
+    out.textContent = '—';
     status.style.display = 'none';
     currentEyes = [];
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
@@ -520,7 +562,7 @@ stopBtn.onclick = () => {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
   currentGlucose = null;
   currentEyes = [];
-  out.textContent = '–';
+  out.textContent = '—';
   msg.textContent = '';
   msg.style.color = '#666';
   status.style.display = 'none';
