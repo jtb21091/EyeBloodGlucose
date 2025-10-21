@@ -31,13 +31,21 @@ from scipy.stats import uniform, randint, loguniform, norm
 import matplotlib.pyplot as plt
 
 # -----------------------
-# Config
+# Config - UPDATED for new features
 # -----------------------
 FEATURES_ORDER = [
-    "pupil_size","sclera_redness","vein_prominence","pupil_response_time","ir_intensity",
-    "scleral_vein_density","ir_temperature","tear_film_reflectivity","pupil_dilation_rate",
-    "sclera_color_balance","vein_pulsation_intensity","birefringence_index"
+    'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
+    'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
+    'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
+    'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
 ]
+
+# Backward compatibility mapping for old column names
+OLD_COLUMN_MAPPING = {
+    'pupil_response_time': 'capture_duration',
+    'pupil_dilation_rate': None  # Drop this - was duplicate of pupil_size
+}
+
 TARGET_CANDIDATES = ["blood_glucose","blood_glucose_mg_dl","glucose_mg_dl"]
 cv5 = KFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -68,7 +76,7 @@ def resolve_csv_path(user_csv: str | None) -> str:
     )
 
 # -----------------------
-# Data prep
+# Data prep - UPDATED
 # -----------------------
 def prepare_data(csv_path: str | None = None, convert_mmol_to_mgdl: bool = False):
     csv_path = resolve_csv_path(csv_path)
@@ -83,10 +91,22 @@ def prepare_data(csv_path: str | None = None, convert_mmol_to_mgdl: bool = False
             raise ValueError("labels.csv must contain a numeric target column.")
         target = num.columns[-1]
 
+    # Handle old column names for backward compatibility
+    for old_name, new_name in OLD_COLUMN_MAPPING.items():
+        if old_name in df.columns:
+            if new_name is not None:
+                # Rename the column
+                df[new_name] = df[old_name]
+                logging.info(f"Mapped old column '{old_name}' → '{new_name}'")
+            else:
+                # Drop it (pupil_dilation_rate was duplicate)
+                logging.info(f"Dropping duplicate column '{old_name}'")
+
     # Ensure all feature columns exist; missing become NaN -> imputed
     for f in FEATURES_ORDER:
         if f not in df.columns:
             df[f] = np.nan
+            logging.debug(f"Feature '{f}' not in CSV; will be imputed")
 
     X = df[FEATURES_ORDER].astype(float)
     y = pd.to_numeric(df[target], errors="coerce")
@@ -94,12 +114,20 @@ def prepare_data(csv_path: str | None = None, convert_mmol_to_mgdl: bool = False
     if convert_mmol_to_mgdl:
         y = y * 18.0
 
+    # Count how many samples have new features
+    new_features = ['lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score']
+    new_feature_counts = {f: X[f].notna().sum() for f in new_features}
+    
     logging.info(f"Target column: {target}")
     logging.info(
         "y stats (mg/dL expected): "
         f"min={np.nanmin(y):.3f} max={np.nanmax(y):.3f} mean={np.nanmean(y):.3f}"
     )
-    logging.info(f"Training features (12): {FEATURES_ORDER}")
+    logging.info(f"Training features (15): {FEATURES_ORDER}")
+    logging.info(f"New features availability:")
+    for feat, count in new_feature_counts.items():
+        logging.info(f"  {feat}: {count}/{len(df)} samples ({count/len(df)*100:.1f}%)")
+    
     return X, y
 
 # -----------------------
@@ -159,11 +187,13 @@ def plot_feature_importance(model, feature_names, out_path="feature_importance.p
     order = np.argsort(importances)[::-1]
     names_sorted = np.array(feature_names)[order]
     vals_sorted = np.array(importances)[order]
-    plt.figure(figsize=(7,5))
-    plt.bar(range(len(vals_sorted)), vals_sorted)
+    
+    plt.figure(figsize=(10,6))
+    colors = ['green' if n in ['lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'] else 'blue' for n in names_sorted]
+    plt.bar(range(len(vals_sorted)), vals_sorted, color=colors)
     plt.xticks(range(len(vals_sorted)), names_sorted, rotation=45, ha="right")
     plt.ylabel("Importance")
-    plt.title("Feature Importance")
+    plt.title("Feature Importance (Green = New Features)")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     if show:
@@ -324,7 +354,7 @@ def train(csv_path: str | None = None,
         "mard_percent": float(mard),
         "yield_within_spec": float(yield_rate),
         "defects": defects,
-        "total": total,                  # <- equals full labels row count
+        "total": total,
         "dpmo": float(dpmo),
         "sigma_short_term": float(sigma["short_term_sigma"]),
         "sigma_long_term": float(sigma["long_term_sigma"]),
