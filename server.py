@@ -1,10 +1,18 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-import cv2, numpy as np, joblib, io
+from fastapi.responses import FileResponse
+import cv2, numpy as np, joblib, io, os
 from typing import Dict
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.get("/")
+async def read_root():
+    """Serve the index.html file"""
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    return {"message": "EyeBloodGlucose API - use /predict endpoint"}
 
 model = joblib.load("best_model.pkl")
 
