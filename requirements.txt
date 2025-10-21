@@ -27,13 +27,12 @@ h5py==3.11.0
 
 # MediaPipe + compatibility pins
 mediapipe==0.10.21
-protobuf==4.25.5
+protobuf>=4.25.3,<5
 
 # TensorFlow/Keras (Apple Silicon optimized - STABLE VERSIONS)
 tensorflow==2.15.0
 tensorflow-macos==2.15.0
 tensorflow-metal==1.1.0
-keras==2.15.0
 
 # Apple / CoreML export (optional; can comment if builds fail)
 coremltools==8.3
