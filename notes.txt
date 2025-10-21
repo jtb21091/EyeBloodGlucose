@@ -8,3 +8,6 @@ git commit -m "Update model with new data"
 git push
 
 python model.py --test-focus
+
+REMEMBER TO EVERYTIME YOU UPDATE PKL FILE IN GITHUB RELEASE:
+Compute SHA-256 for best_model.pkl

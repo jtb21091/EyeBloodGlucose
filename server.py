@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import logging
 import requests
+import hashlib
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -82,11 +83,21 @@ app.add_middleware(
 MODEL_PATH = "best_model.pkl"
 MODEL_URL = "https://github.com/jtb21091/EyeBloodGlucose/releases/download/v1.0.0/best_model.pkl"
 
+# 🚨 Replace this with the real SHA-256 of best_model.pkl
+EXPECTED_SHA256 = "PUT_YOUR_MODEL_SHA256_HERE"
+
+def sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 def download_model():
     """Download model from GitHub Release if not already present."""
     if not os.path.exists(MODEL_PATH):
         logging.info(f"Model not found locally. Downloading from {MODEL_URL}...")
-        resp = requests.get(MODEL_URL, stream=True)
+        resp = requests.get(MODEL_URL, stream=True, timeout=60)
         resp.raise_for_status()
         with open(MODEL_PATH, "wb") as f:
             for chunk in resp.iter_content(chunk_size=8192):
@@ -95,19 +106,42 @@ def download_model():
     else:
         logging.info(f"Model found locally at {MODEL_PATH}")
 
+def verify_model_checksum():
+    if EXPECTED_SHA256 and len(EXPECTED_SHA256) == 64:
+        actual = sha256_file(MODEL_PATH)
+        if actual != EXPECTED_SHA256:
+            logging.error(f"Model SHA256 mismatch! expected {EXPECTED_SHA256}, got {actual}")
+            raise SystemExit("Refusing to load unexpected model file.")
+        logging.info("Model SHA256 verified.")
+    else:
+        logging.warning("EXPECTED_SHA256 not set (or invalid). Skipping checksum verification.")
+
 
 # ------------------------------------------------------------------
 # Load model (HOT-FIX for pickled __main__.FeatureEngineer)
 # ------------------------------------------------------------------
 download_model()
+verify_model_checksum()
 
 # >>> HOT-FIX <<<
 import sys
 setattr(sys.modules.setdefault("__main__", sys.modules["__main__"]), "FeatureEngineer", FeatureEngineer)
 # >>> END HOT-FIX <<<
 
-model = joblib.load(MODEL_PATH)
-logging.info("Model loaded successfully")
+try:
+    model = joblib.load(MODEL_PATH)
+    logging.info("Model loaded successfully")
+except ModuleNotFoundError as e:
+    # Friendlier message when LightGBM/XGBoost isn't present
+    logging.exception(
+        "Missing dependency while unpickling the model: %s\n"
+        "Make sure requirements2.txt includes lightgbm==4.5.0 and xgboost==2.1.1 "
+        "and that the service uses Python 3.12.6 (runtime.txt or PYTHON_VERSION).", e
+    )
+    raise
+except Exception:
+    logging.exception("Failed to load the model from %s", MODEL_PATH)
+    raise
 
 
 # ------------------------------------------------------------------
