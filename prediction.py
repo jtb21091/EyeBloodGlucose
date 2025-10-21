@@ -1,5 +1,5 @@
 # eye_glucose_runtime.py
-# Run with:  python eye_glucose_runtime.py best_model.pkl
+# Run with:  python prediction.py best_model.pkl
 
 import os, cv2, numpy as np, pandas as pd, joblib, logging, time
 from typing import Dict, Optional, List, Tuple
@@ -112,9 +112,7 @@ def get_birefringence_index(img):
 # ---------- improved adaptive preproc ----------
 def to_gray_clahe(frame):
     g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # Add histogram equalization for better contrast
     g = cv2.equalizeHist(g)
-    # Enhanced CLAHE with higher clip limit
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
     return clahe.apply(g)
 
@@ -137,14 +135,12 @@ class EyeDetector:
         return (x+dx, y+dy, max(1, w-2*dx), max(1, h-2*dy))
 
     def _detect_in_face(self, gray):
-        # More lenient face detection
         faces = self.face.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(60,60))
         rects = []
         if len(faces):
             fx, fy, fw, fh = sorted(faces, key=lambda r: r[2]*r[3], reverse=True)[0]
             roi = gray[fy:fy+fh, fx:fx+fw]
             cand = []
-            # Try glasses cascade first (better for glasses wearers)
             if not self.glasses.empty():
                 cand += list(self.glasses.detectMultiScale(roi, scaleFactor=1.03, minNeighbors=2, minSize=(16,16)))
             if not self.eye.empty():
@@ -155,7 +151,6 @@ class EyeDetector:
 
     def _detect_full(self, gray):
         rects = []
-        # More lenient full-frame detection
         if not self.glasses.empty():
             rects += list(self.glasses.detectMultiScale(gray, scaleFactor=1.04, minNeighbors=2, minSize=(14,14)))
         if not self.eye.empty():
@@ -164,7 +159,6 @@ class EyeDetector:
 
     def _pupil_hints(self, gray):
         g = cv2.medianBlur(gray, 5)
-        # More sensitive pupil detection
         circles = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=25, 
                                    param1=35, param2=14, minRadius=5, maxRadius=70)
         rects = []
@@ -172,7 +166,7 @@ class EyeDetector:
             c = np.uint16(np.around(circles))[0]
             c = sorted(c, key=lambda k: k[2], reverse=True)[:2]
             for (x,y,r) in c:
-                s = int(r*3.0)  # Slightly larger box
+                s = int(r*3.0)
                 rects.append((int(x-s//2), int(y-s//2), s, s))
         return rects
 
@@ -184,7 +178,6 @@ class EyeDetector:
         if len(rects) < 1: rects = self._detect_full(gray)
         if len(rects) < 1: rects = self._pupil_hints(gray)
 
-        # Normalize & pick best 1-2
         h, w = gray.shape[:2]
         norm = []
         for (x,y,ww,hh) in rects:
@@ -194,9 +187,7 @@ class EyeDetector:
                 norm.append((x1,y1,x2-x1,y2-y1))
         norm.sort(key=lambda r: r[2]*r[3], reverse=True)
         norm = norm[:2]
-        # tighten boxes slightly less aggressively
         norm = [self._trim_box(*r, shrink=0.18) for r in norm]
-        # order L->R if two
         if len(norm) == 2 and norm[0][0] > norm[1][0]:
             norm = [norm[1], norm[0]]
         return norm
@@ -205,10 +196,11 @@ def draw_targets(frame, rects: List[Tuple[int,int,int,int]], show=True):
     if not show: return
     for (x,y,w,h) in rects:
         cx, cy = x + w//2, y + h//2
-        cv2.rectangle(frame, (x,y), (x+w, y+h), (0,255,255), 2)
-        cv2.line(frame, (cx-10, cy), (cx+10, cy), (0,255,255), 2)
-        cv2.line(frame, (cx, cy-10), (cx, cy+10), (0,255,255), 2)
-        cv2.circle(frame, (cx, cy), 3, (0,255,255), -1)
+        # Changed color to bright green (0,255,0) in BGR
+        cv2.rectangle(frame, (x,y), (x+w, y+h), (0,255,0), 3)
+        cv2.line(frame, (cx-12, cy), (cx+12, cy), (0,255,0), 2)
+        cv2.line(frame, (cx, cy-12), (cx, cy+12), (0,255,0), 2)
+        cv2.circle(frame, (cx, cy), 4, (0,255,0), -1)
 
 def union_crop(frame, rects: List[Tuple[int,int,int,int]], pad_ratio: float=0.12) -> Optional[np.ndarray]:
     """Small image around eyes (tight union, small padding)."""
@@ -247,20 +239,16 @@ class EyeGlucoseMonitor:
         self.alpha = 0.009
         self._stop = False
 
-        # detection + behavior
         self.detector = EyeDetector()
         self.show_overlay = True
 
-        # More lenient tolerance
-        self.no_eye_grace = 3           # frames with 0 eyes before "NO EYES" (was 2)
-        self.single_eye_tolerance = 60  # frames we allow operating with 1 eye (was 30)
+        # STRICT MODE: require both eyes
+        self.no_eye_grace = 2
         self.hit_streak = 0
         self.miss_streak = 0
-        self.single_eye_frames = 0
 
-        self.eyes_mode = "none"  # "both" | "single" | "none"
+        self.eyes_mode = "none"
         self.last_rects: List[Tuple[int,int,int,int]] = []
-        self.last_roi = None
 
     def _load_model(self, path):
         if not os.path.exists(path): raise SystemExit(f"Model not found: {path}")
@@ -269,43 +257,23 @@ class EyeGlucoseMonitor:
         return m
 
     def detect(self, frame) -> Detection:
-        rects = self.detector.detect_eyes(frame)  # returns 1-2 tight rects
+        rects = self.detector.detect_eyes(frame)
         n = len(rects)
 
+        # STRICT MODE: Only accept 2 eyes
         if n == 2:
-            self.hit_streak += 1; self.miss_streak = 0
-            self.eyes_mode = "both"; self.single_eye_frames = 0
+            self.hit_streak += 1
+            self.miss_streak = 0
+            self.eyes_mode = "both"
             self.last_rects = rects
             roi = union_crop(frame, rects, pad_ratio=0.12)
-            self.last_roi = roi if roi is not None else self.last_roi
             return Detection(eye_rects=rects, roi=roi)
-
-        elif n == 1:
-            # allow single-eye mode for a while
-            self.hit_streak += 1; self.miss_streak = 0
-            self.single_eye_frames = min(self.single_eye_frames + 1, self.single_eye_tolerance+1)
-            self.eyes_mode = "single"
-            # pair with last known missing eye if available
-            paired = [rects[0]]
-            if len(self.last_rects) == 2:
-                # choose the last eye farther away in x as the missing partner
-                lastL, lastR = sorted(self.last_rects, key=lambda r: r[0])
-                cur = rects[0]
-                partner = lastR if abs(cur[0]-lastL[0]) < abs(cur[0]-lastR[0]) else lastL
-                paired = sorted([cur, partner], key=lambda r: r[0])
-            roi = union_crop(frame, paired, pad_ratio=0.12)
-            if roi is None and self.last_roi is not None:
-                roi = self.last_roi
-            self.last_roi = roi if roi is not None else self.last_roi
-            self.last_rects = paired if len(paired)==2 else self.last_rects
-            return Detection(eye_rects=paired, roi=roi)
-
         else:
-            # 0 eyes
-            self.hit_streak = 0; self.miss_streak += 1
+            # No prediction if not exactly 2 eyes
+            self.hit_streak = 0
+            self.miss_streak += 1
             if self.miss_streak >= self.no_eye_grace:
                 self.eyes_mode = "none"
-                self.single_eye_frames = 0
             return Detection(eye_rects=[], roi=None)
 
     def extract_features(self, roi: Optional[np.ndarray]) -> Dict[str,float]:
@@ -356,6 +324,7 @@ class EyeGlucoseMonitor:
             plt.close(fig); return
 
         print("Webcam opened. Press 'd' to toggle overlay, 'q' to quit.")
+        print("STRICT MODE: Both eyes required for prediction")
         t0 = time.time()
         smooth = None
         alpha = self.alpha
@@ -368,14 +337,8 @@ class EyeGlucoseMonitor:
 
                 det = self.detect(frame)
 
-                # decide visibility message
-                status = {
-                    "both": "Both eyes detected",
-                    "single": f"1/2 eyes (tolerating {self.single_eye_frames}/{self.single_eye_tolerance})",
-                    "none": "NO EYES DETECTED — prediction paused"
-                }[self.eyes_mode]
-
-                if det.roi is not None and self.eyes_mode in ("both", "single"):
+                # STRICT: only predict with both eyes
+                if det.roi is not None and self.eyes_mode == "both" and len(det.eye_rects) == 2:
                     draw_targets(frame, det.eye_rects, self.show_overlay)
                     feats = self.extract_features(det.roi)
                     y = self.predict_once(feats)
@@ -384,22 +347,20 @@ class EyeGlucoseMonitor:
                     t = time.time() - t0
                     self.time.append(t); self.inst.append(y); self.avg.append(smooth)
 
-                    cv2.putText(frame, status, (10,35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0,255,255), 2)
+                    cv2.putText(frame, "Both eyes detected", (10,35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0,255,0), 2)
                     cv2.putText(frame, f"Inst: {y:.1f} mg/dL", (10,70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
                     cv2.putText(frame, f"Avg:  {smooth:.1f} mg/dL", (10,110), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
                 else:
-                    msg = status
-                    (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                    msg = "EYES CLOSED OR NOT DETECTED - No prediction"
+                    (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
                     cv2.rectangle(frame, (10, 10), (10+tw+10, 10+th+10), (0,0,255), -1)
-                    cv2.putText(frame, msg, (15, 10+th+3), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
+                    cv2.putText(frame, msg, (15, 10+th+3), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
 
-                # overlay hint
                 cv2.putText(frame, f"Overlay: {'ON' if self.show_overlay else 'OFF'} (press 'd')",
                             (10, frame.shape[0]-15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 1)
 
                 cv2.imshow("Blood Glucose", frame)
 
-                # update plot
                 li.set_data(self.time, self.inst); ls.set_data(self.time, self.avg)
                 ax.relim(); ax.autoscale_view()
                 fig.canvas.draw(); fig.canvas.flush_events()
