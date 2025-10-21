@@ -27,11 +27,12 @@ h5py==3.11.0
 
 # MediaPipe + compatibility pins
 mediapipe==0.10.21
-protobuf==4.25.3
+protobuf==4.25.5
 
 # TensorFlow/Keras (for any deep learning or feature extraction)
-tensorflow==2.15.0
-keras==2.15.0
+# Using tensorflow-cpu for smaller install size (optional)
+tensorflow==2.18.0
+keras==3.7.0
 
 # Apple / CoreML export (optional; can comment if builds fail)
 coremltools==8.3
@@ -41,6 +42,7 @@ skl2onnx==1.17.0
 onnx==1.17.0
 onnxruntime==1.19.2
 
-fastapi==0.95.2
-uvicorn==0.22.0
-python-multipart==0.0.6
+# Web framework (PATCHED VERSIONS)
+fastapi==0.115.6
+uvicorn==0.34.0
+python-multipart==0.0.19
