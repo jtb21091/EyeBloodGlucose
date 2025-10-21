@@ -1,4 +1,4 @@
-# eye_glucose_runtime.py
+# prediction.py
 # Run with:  python prediction.py best_model.pkl
 
 import os, cv2, numpy as np, pandas as pd, joblib, logging, time
@@ -9,10 +9,12 @@ import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# UPDATED FEATURES ORDER - 15 features now
 FEATURES_ORDER = [
-    'pupil_size','sclera_redness','vein_prominence','pupil_response_time','ir_intensity',
-    'scleral_vein_density','ir_temperature','tear_film_reflectivity','pupil_dilation_rate',
-    'sclera_color_balance','vein_pulsation_intensity','birefringence_index'
+    'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
+    'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
+    'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
+    'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
 ]
 
 # ---------- feature extractors (return NaN on failure) ----------
@@ -109,6 +111,118 @@ def get_birefringence_index(img):
     except Exception:
         return np.nan
 
+# ---------- NEW FEATURE EXTRACTORS ----------
+def get_lens_clarity_score(img):
+    """
+    Measure lens opacity/clarity score.
+    Higher values indicate more clarity/less opacity.
+    """
+    try:
+        if img is None or img.size == 0: return np.nan
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        # Focus on central region (approximate lens area)
+        center_y_start, center_y_end = h // 3, 2 * h // 3
+        center_x_start, center_x_end = w // 3, 2 * w // 3
+        center = gray[center_y_start:center_y_end, center_x_start:center_x_end]
+        
+        if center.size == 0:
+            return np.nan
+        
+        clarity = np.std(center) / (np.mean(center) + 1e-5)
+        return float(round(clarity, 5))
+    except Exception:
+        return np.nan
+
+def get_sclera_yellowness(img):
+    """
+    Measure yellowish tint in sclera using LAB color space.
+    The b channel in LAB represents yellow-blue axis.
+    """
+    try:
+        if img is None or img.size == 0: return np.nan
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        b_channel = lab[:, :, 2]  # Yellow-blue axis (higher = more yellow)
+        yellowness = np.mean(b_channel)
+        return float(round(yellowness, 5))
+    except Exception:
+        return np.nan
+
+def get_vessel_tortuosity(img):
+    """
+    Estimate blood vessel tortuosity (twistedness) using edge curvature analysis.
+    High glucose levels can increase vessel tortuosity.
+    """
+    try:
+        if img is None or img.size == 0: return np.nan
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Apply bilateral filter to reduce noise while preserving edges
+        filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+        
+        # Detect edges with stricter thresholds for vessel detection
+        edges = cv2.Canny(filtered, 30, 90)
+        
+        # Find contours representing vessels
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        
+        if not contours:
+            return 0.0
+        
+        # Calculate tortuosity for each contour
+        tortuosity_scores = []
+        for contour in contours:
+            if len(contour) > 10:  # Need sufficient points
+                # Calculate arc length
+                arc_length = cv2.arcLength(contour, False)
+                
+                # Calculate chord length (straight line distance)
+                if len(contour) >= 2:
+                    start_point = contour[0][0]
+                    end_point = contour[-1][0]
+                    chord_length = np.linalg.norm(start_point - end_point)
+                    
+                    # Tortuosity = arc_length / chord_length
+                    if chord_length > 0:
+                        tortuosity = arc_length / (chord_length + 1e-5)
+                        tortuosity_scores.append(tortuosity)
+        
+        if tortuosity_scores:
+            mean_tortuosity = np.mean(tortuosity_scores)
+            return float(round(mean_tortuosity, 5))
+        else:
+            return 0.0
+    except Exception:
+        return np.nan
+
+def get_image_quality_score(img):
+    """
+    Calculate composite image quality metric.
+    Combines blur, brightness, and contrast into a single score.
+    """
+    try:
+        if img is None or img.size == 0: return np.nan
+        
+        # Blur detection
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blur_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Brightness and contrast
+        brightness = np.mean(img)
+        contrast = np.std(img)
+        
+        # Normalize each component
+        blur_score = min(blur_var / 100.0, 1.0)
+        brightness_score = 1.0 - abs(brightness - 128) / 128.0
+        contrast_score = min(contrast / 50.0, 1.0)
+        
+        # Composite quality (0-100 scale)
+        quality = (blur_score + brightness_score + contrast_score) / 3.0 * 100
+        
+        return float(round(quality, 5))
+    except Exception:
+        return np.nan
+
 # ---------- improved adaptive preproc ----------
 def to_gray_clahe(frame):
     g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -196,7 +310,6 @@ def draw_targets(frame, rects: List[Tuple[int,int,int,int]], show=True):
     if not show: return
     for (x,y,w,h) in rects:
         cx, cy = x + w//2, y + h//2
-        # Changed color to bright green (0,255,0) in BGR
         cv2.rectangle(frame, (x,y), (x+w, y+h), (0,255,0), 3)
         cv2.line(frame, (cx-12, cy), (cx+12, cy), (0,255,0), 2)
         cv2.line(frame, (cx, cy-12), (cx, cy+12), (0,255,0), 2)
@@ -225,8 +338,12 @@ class EyeGlucoseMonitor:
         self.model = self._load_model(model_path)
         if not hasattr(self.model, "feature_names_in_"):
             raise SystemExit("Model is missing feature_names_in_. Retrain with the provided training script.")
-        if list(self.model.feature_names_in_) != FEATURES_ORDER:
-            raise SystemExit(f"Model features {list(self.model.feature_names_in_)} do not match required 12-feature schema. Retrain.")
+        
+        model_features = list(self.model.feature_names_in_)
+        if model_features != FEATURES_ORDER:
+            logging.warning(f"Model features: {model_features}")
+            logging.warning(f"Expected features: {FEATURES_ORDER}")
+            raise SystemExit(f"Model features do not match required schema. Retrain with updated training.py")
 
         pre = self.model.named_steps["preprocessor"]
         stats = pre.named_steps["imputer"].statistics_
@@ -279,19 +396,23 @@ class EyeGlucoseMonitor:
     def extract_features(self, roi: Optional[np.ndarray]) -> Dict[str,float]:
         if roi is None:
             return {k: np.nan for k in FEATURES_ORDER}
+        
         feats = {
             "pupil_size": get_pupil_size(roi),
             "sclera_redness": get_sclera_redness(roi),
             "vein_prominence": get_vein_prominence(roi),
-            "pupil_response_time": np.nan,
+            "capture_duration": np.nan,  # Can't measure this in real-time
             "ir_intensity": get_ir_intensity(roi),
             "scleral_vein_density": get_scleral_vein_density(roi),
             "ir_temperature": get_ir_temperature(roi),
             "tear_film_reflectivity": get_tear_film_reflectivity(roi),
-            "pupil_dilation_rate": np.nan,
             "sclera_color_balance": get_sclera_color_balance(roi),
             "vein_pulsation_intensity": get_vein_pulsation_intensity(roi),
-            "birefringence_index": get_birefringence_index(roi)
+            "birefringence_index": get_birefringence_index(roi),
+            "lens_clarity_score": get_lens_clarity_score(roi),
+            "sclera_yellowness": get_sclera_yellowness(roi),
+            "vessel_tortuosity": get_vessel_tortuosity(roi),
+            "image_quality_score": get_image_quality_score(roi)
         }
         return {k: feats.get(k, np.nan) for k in FEATURES_ORDER}
 
