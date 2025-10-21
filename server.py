@@ -1,11 +1,50 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import cv2, numpy as np, joblib, io, os
+import cv2, numpy as np, joblib, io, os, requests
 from typing import Dict
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Download model from GitHub Release if not present
+MODEL_PATH = "best_model.pkl"
+MODEL_URL = "https://github.com/jtb21091/EyeBloodGlucose/releases/download/v1.0.0/best_model.pkl"
+
+def download_model():
+    """Download model from GitHub Release if not present locally"""
+    if not os.path.exists(MODEL_PATH):
+        logging.info(f"Model not found locally. Downloading from {MODEL_URL}...")
+        try:
+            response = requests.get(MODEL_URL, stream=True)
+            response.raise_for_status()
+            
+            with open(MODEL_PATH, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logging.info(f"Model downloaded successfully to {MODEL_PATH}")
+        except Exception as e:
+            logging.error(f"Failed to download model: {e}")
+            raise RuntimeError(f"Could not download model from GitHub Release: {e}")
+    else:
+        logging.info(f"Model found locally at {MODEL_PATH}")
+
+# Download and load model on startup
+download_model()
+model = joblib.load(MODEL_PATH)
+logging.info("Model loaded successfully")
+
+# UPDATED FEATURES ORDER - 15 features to match new training.py
+FEATURES_ORDER = [
+    'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
+    'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
+    'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
+    'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
+]
 
 @app.get("/")
 async def read_root():
@@ -13,14 +52,6 @@ async def read_root():
     if os.path.exists("index.html"):
         return FileResponse("index.html")
     return {"message": "EyeBloodGlucose API - use /predict endpoint"}
-
-model = joblib.load("best_model.pkl")
-
-FEATURES_ORDER = [
-    'pupil_size','sclera_redness','vein_prominence','pupil_response_time','ir_intensity',
-    'scleral_vein_density','ir_temperature','tear_film_reflectivity','pupil_dilation_rate',
-    'sclera_color_balance','vein_pulsation_intensity','birefringence_index'
-]
 
 # Feature extraction functions
 def get_pupil_size(img):
@@ -105,9 +136,83 @@ def get_birefringence_index(img):
         return float(round(np.var(g)/255.0, 5))
     except: return np.nan
 
+# NEW FEATURE EXTRACTORS (matching prediction.py)
+def get_lens_clarity_score(img):
+    try:
+        if img is None or img.size == 0: return np.nan
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        center_y_start, center_y_end = h // 3, 2 * h // 3
+        center_x_start, center_x_end = w // 3, 2 * w // 3
+        center = gray[center_y_start:center_y_end, center_x_start:center_x_end]
+        
+        if center.size == 0:
+            return np.nan
+        
+        clarity = np.std(center) / (np.mean(center) + 1e-5)
+        return float(round(clarity, 5))
+    except: return np.nan
+
+def get_sclera_yellowness(img):
+    try:
+        if img is None or img.size == 0: return np.nan
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        b_channel = lab[:, :, 2]
+        yellowness = np.mean(b_channel)
+        return float(round(yellowness, 5))
+    except: return np.nan
+
+def get_vessel_tortuosity(img):
+    try:
+        if img is None or img.size == 0: return np.nan
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+        edges = cv2.Canny(filtered, 30, 90)
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        
+        if not contours:
+            return 0.0
+        
+        tortuosity_scores = []
+        for contour in contours:
+            if len(contour) > 10:
+                arc_length = cv2.arcLength(contour, False)
+                if len(contour) >= 2:
+                    start_point = contour[0][0]
+                    end_point = contour[-1][0]
+                    chord_length = np.linalg.norm(start_point - end_point)
+                    
+                    if chord_length > 0:
+                        tortuosity = arc_length / (chord_length + 1e-5)
+                        tortuosity_scores.append(tortuosity)
+        
+        if tortuosity_scores:
+            mean_tortuosity = np.mean(tortuosity_scores)
+            return float(round(mean_tortuosity, 5))
+        else:
+            return 0.0
+    except: return np.nan
+
+def get_image_quality_score(img):
+    try:
+        if img is None or img.size == 0: return np.nan
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blur_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        brightness = np.mean(img)
+        contrast = np.std(img)
+        
+        blur_score = min(blur_var / 100.0, 1.0)
+        brightness_score = 1.0 - abs(brightness - 128) / 128.0
+        contrast_score = min(contrast / 50.0, 1.0)
+        
+        quality = (blur_score + brightness_score + contrast_score) / 3.0 * 100
+        
+        return float(round(quality, 5))
+    except: return np.nan
+
 def detect_eyes(frame):
     """Detect eyes and return rectangles"""
-    base = cv2.data.haarcascades
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
     
@@ -163,20 +268,23 @@ async def predict(file: UploadFile = File(...)):
     
     roi = frame[y1:y2, x1:x2]
     
-    # Extract features
+    # Extract ALL 15 features
     feats = {
         "pupil_size": get_pupil_size(roi),
         "sclera_redness": get_sclera_redness(roi),
         "vein_prominence": get_vein_prominence(roi),
-        "pupil_response_time": np.nan,
+        "capture_duration": np.nan,  # Can't measure in real-time
         "ir_intensity": get_ir_intensity(roi),
         "scleral_vein_density": get_scleral_vein_density(roi),
         "ir_temperature": get_ir_temperature(roi),
         "tear_film_reflectivity": get_tear_film_reflectivity(roi),
-        "pupil_dilation_rate": np.nan,
         "sclera_color_balance": get_sclera_color_balance(roi),
         "vein_pulsation_intensity": get_vein_pulsation_intensity(roi),
-        "birefringence_index": get_birefringence_index(roi)
+        "birefringence_index": get_birefringence_index(roi),
+        "lens_clarity_score": get_lens_clarity_score(roi),
+        "sclera_yellowness": get_sclera_yellowness(roi),
+        "vessel_tortuosity": get_vessel_tortuosity(roi),
+        "image_quality_score": get_image_quality_score(roi)
     }
     
     # Fill NaNs with model means
