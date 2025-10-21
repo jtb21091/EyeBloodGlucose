@@ -6,3 +6,5 @@ git lfs install  # if you uninstalled it
 git add -f best_model.pkl
 git commit -m "Update model with new data"
 git push
+
+python model.py --test-focus
