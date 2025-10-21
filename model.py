@@ -397,11 +397,22 @@ def extract_eye_roi(frame):
             y_coords.append(int(lm.y * ih))
         
         if x_coords and y_coords:
-            # IMPROVED: Increased padding from 5 to 30 pixels for better context
-            x_min = max(min(x_coords) - 30, 0)
-            x_max = min(max(x_coords) + 30, iw)
-            y_min = max(min(y_coords) - 30, 0)
-            y_max = min(max(y_coords) + 30, ih)
+            # IMPROVED: Adaptive padding based on eye size
+            # Calculate eye dimensions
+            eye_width = max(x_coords) - min(x_coords)
+            eye_height = max(y_coords) - min(y_coords)
+            
+            # Use 40% of eye size as padding (balances context vs purity)
+            # Minimum 15 pixels, maximum 25 pixels
+            pad_x = int(np.clip(eye_width * 0.4, 15, 25))
+            pad_y = int(np.clip(eye_height * 0.4, 15, 25))
+            
+            x_min = max(min(x_coords) - pad_x, 0)
+            x_max = min(max(x_coords) + pad_x, iw)
+            y_min = max(min(y_coords) - pad_y, 0)
+            y_max = min(max(y_coords) + pad_y, ih)
+            
+            logging.debug(f"Eye ROI padding: X={pad_x}px, Y={pad_y}px (adaptive)")
             roi = frame[y_min:y_max, x_min:x_max]
             
             if roi.size == 0:
@@ -421,26 +432,80 @@ def extract_eye_roi(frame):
             return frame
 
 
+def show_preview_and_capture(cap, duration=5):
+    """Show preview window so user can position themselves before capture."""
+    print(f"\n📸 POSITION YOURSELF - Capturing in {duration} seconds...")
+    print("   ✓ Remove glasses")
+    print("   ✓ Look directly at camera")
+    print("   ✓ Ensure good lighting (face a window)")
+    print("   ✓ Distance: 12-18 inches from camera")
+    print("   ✓ Press 'q' to cancel\n")
+    
+    start_time = time.time()
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Calculate countdown
+        elapsed = time.time() - start_time
+        remaining = max(0, duration - elapsed)
+        
+        # Draw countdown and instructions on frame
+        display = frame.copy()
+        h, w = display.shape[:2]
+        
+        # Large countdown
+        countdown_text = f"{remaining:.1f}s"
+        cv2.putText(display, countdown_text, 
+                   (w//2 - 80, h//2), cv2.FONT_HERSHEY_SIMPLEX, 3.0, (0, 255, 0), 5)
+        
+        # Instructions
+        cv2.putText(display, "REMOVE GLASSES!", 
+                   (50, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+        cv2.putText(display, "Look at camera", 
+                   (50, 110), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        cv2.putText(display, "Press 'q' to cancel", 
+                   (50, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        cv2.imshow("Eye Capture Preview", display)
+        
+        # Check for quit or timeout
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            cv2.destroyAllWindows()
+            return None
+        
+        if elapsed >= duration:
+            cv2.destroyAllWindows()
+            return frame
+    
+    cv2.destroyAllWindows()
+    return None
+
+
 def capture_and_measure():
     """
     Capture eye images and perform all measurements in a single camera session.
     Returns filename, roi, and all measurements.
-    IMPROVED: Enhanced image quality processing.
+    IMPROVED: Enhanced image quality processing with preview window.
     """
     try:
         with open_camera() as cap:
-            # Warm up camera (increased frames for better auto-adjustment)
-            logging.info("Warming up camera for optimal settings...")
-            frame = None
-            for i in range(WARMUP_FRAMES):
-                ret, temp_frame = cap.read()
+            # Quick warmup
+            logging.info("Warming up camera...")
+            for i in range(10):
+                ret, _ = cap.read()
                 if not ret:
                     continue
-                frame = temp_frame
                 time.sleep(0.1)
             
+            # Show preview and capture
+            frame = show_preview_and_capture(cap, duration=5)
+            
             if frame is None:
-                logging.error("Failed to capture frames for warmup.")
+                logging.error("Capture cancelled or failed.")
                 return None
             
             # Check frame quality
@@ -494,6 +559,63 @@ def capture_and_measure():
         return None
 
 
+def test_focus():
+    """Test different focus positions to find optimal setting."""
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    
+    print("\n🎯 FOCUS TEST MODE")
+    print("=" * 60)
+    print("Instructions:")
+    print("  • Adjust your distance from camera")
+    print("  • Try different lighting")
+    print("  • Wait for GREEN (blur score >100)")
+    print("  • Press 's' to save a good frame")
+    print("  • Press 'q' to quit")
+    print("=" * 60 + "\n")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Calculate blur score
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Show frame with blur score
+        display = frame.copy()
+        color = (0, 255, 0) if blur_score > 100 else (0, 0, 255)
+        status = "GOOD - Press 's' to save" if blur_score > 100 else "TOO BLURRY - Adjust position/lighting"
+        
+        cv2.putText(display, f"Blur Score: {blur_score:.1f}", 
+                   (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3)
+        cv2.putText(display, status, 
+                   (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        cv2.putText(display, "Target: >100 for good quality", 
+                   (50, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(display, "Press 'q' to quit, 's' to save", 
+                   (50, display.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.imshow("Focus Test", display)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('s'):
+            cv2.imwrite("focus_test.png", frame)
+            print(f"\n✓ Saved focus_test.png! Blur score: {blur_score:.1f}")
+            if blur_score > 100:
+                print("✓ Good quality! This distance/lighting should work well.")
+            else:
+                print("⚠ Still blurry. Try adjusting position or lighting.")
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    print("\nFocus test complete!")
+
+
 def update_data():
     """Capture an eye image, compute measurement values, and update the dataset."""
     result = capture_and_measure()
@@ -545,4 +667,8 @@ def update_data():
 
 
 if __name__ == "__main__":
-    update_data()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-focus":
+        test_focus()
+    else:
+        update_data()
