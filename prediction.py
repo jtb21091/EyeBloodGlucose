@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from collections import deque
 import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -317,8 +318,10 @@ class EyeDetector:
         self.glasses = cv2.CascadeClassifier(os.path.join(base, "haarcascade_eye_tree_eyeglasses.xml"))
         if self.face.empty() or (self.eye.empty() and self.glasses.empty()):
             logging.warning("Haar cascades not found; detection limited.")
+        # Tunable shrink for tighter eye boxes
+        self.shrink = 0.22
 
-    def _trim_box(self, x,y,w,h, shrink=0.2):
+    def _trim_box(self, x,y,w,h, shrink=0.22):
         dx, dy = int(w*shrink), int(h*shrink)
         return (x+dx, y+dy, max(1, w-2*dx), max(1, h-2*dy))
 
@@ -358,6 +361,44 @@ class EyeDetector:
                 rects.append((int(x-s//2), int(y-s//2), s, s))
         return rects
 
+    def _eye_open_score(self, roi_bgr) -> float:
+        """Return an 'open eye' score. >1.0 typically indicates open eyes.
+        Combines pupil circle presence, contrast, edge density, and sclera brightness.
+        """
+        try:
+            if roi_bgr is None or roi_bgr.size == 0:
+                return 0.0
+            gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+            h, w = gray.shape[:2]
+            if h < 10 or w < 10:
+                return 0.0
+
+            # Pupil circle detection
+            g = cv2.medianBlur(gray, 5)
+            circles = cv2.HoughCircles(
+                g, cv2.HOUGH_GRADIENT, dp=1.3, minDist=max(12, min(h, w)//6),
+                param1=40, param2=16, minRadius=max(4, min(h, w)//12), maxRadius=max(10, min(h, w)//3)
+            )
+            pupil_term = 1.0 if circles is not None else 0.0
+
+            # Contrast and edges
+            std = float(np.std(gray))
+            edges = cv2.Canny(gray, 40, 120)
+            edge_density = float(np.count_nonzero(edges)) / (edges.size + 1e-6)
+            contrast_term = min(std / 25.0, 1.5)
+            edge_term = min(edge_density / 0.04, 1.5)
+
+            # Sclera brightness via LAB L channel
+            lab = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2LAB)
+            L = lab[:, :, 0]
+            bright_frac = float(np.mean(L > 200))
+            sclera_term = min(bright_frac / 0.08, 1.5)
+
+            score = 0.9 * pupil_term + 0.6 * contrast_term + 0.6 * edge_term + 0.6 * sclera_term
+            return score
+        except Exception:
+            return 0.0
+
     def detect_eyes(self, frame) -> List[Tuple[int,int,int,int]]:
         if frame is None or frame.size == 0: return []
         gray = to_gray_clahe(frame)
@@ -375,7 +416,7 @@ class EyeDetector:
                 norm.append((x1,y1,x2-x1,y2-y1))
         norm.sort(key=lambda r: r[2]*r[3], reverse=True)
         norm = norm[:2]
-        norm = [self._trim_box(*r, shrink=0.18) for r in norm]
+        norm = [self._trim_box(*r, shrink=self.shrink) for r in norm]
         if len(norm) == 2 and norm[0][0] > norm[1][0]:
             norm = [norm[1], norm[0]]
         return norm
@@ -389,7 +430,7 @@ def draw_targets(frame, rects: List[Tuple[int,int,int,int]], show=True):
         cv2.line(frame, (cx, cy-12), (cx, cy+12), (0,255,0), 2)
         cv2.circle(frame, (cx, cy), 4, (0,255,0), -1)
 
-def union_crop(frame, rects: List[Tuple[int,int,int,int]], pad_ratio: float=0.12) -> Optional[np.ndarray]:
+def union_crop(frame, rects: List[Tuple[int,int,int,int]], pad_ratio: float=0.08) -> Optional[np.ndarray]:
     """Small image around eyes (tight union, small padding)."""
     if frame is None or len(rects) == 0: return None
     h, w, _ = frame.shape
@@ -442,6 +483,14 @@ class EyeGlucoseMonitor:
 
         self.detector = EyeDetector()
         self.show_overlay = True
+        self.session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Eye-open gating (off by default). Threshold cycles: 0.8 -> 0.9 -> 1.0
+        self.gate_eyes_open = False
+        self.eye_open_threshold = 0.9
+        # Auto-capture controls
+        self.auto_capture_on = False
+        self.auto_capture_interval = 5.0  # seconds
+        self._last_capture_ts = 0.0
 
         # STRICT MODE: require both eyes
         self.no_eye_grace = 2
@@ -467,12 +516,24 @@ class EyeGlucoseMonitor:
             self.miss_streak = 0
             self.eyes_mode = "both"
             self.last_rects = rects
-            roi = union_crop(frame, rects, pad_ratio=0.12)
+            roi = union_crop(frame, rects, pad_ratio=0.08)
+            # Slightly relax trim when confident to keep ROI tight but stable
+            try:
+                if hasattr(self.detector, 'shrink'):
+                    self.detector.shrink = min(0.24, self.detector.shrink + 0.005)
+            except Exception:
+                pass
             return Detection(eye_rects=rects, roi=roi)
         else:
             # No prediction if not exactly 2 eyes
             self.hit_streak = 0
             self.miss_streak += 1
+            # When we frequently see only one eye, gently widen boxes
+            try:
+                if hasattr(self.detector, 'shrink'):
+                    self.detector.shrink = max(0.18, self.detector.shrink - 0.005)
+            except Exception:
+                pass
             if self.miss_streak >= self.no_eye_grace:
                 self.eyes_mode = "none"
             return Detection(eye_rects=[], roi=None)
@@ -520,6 +581,36 @@ class EyeGlucoseMonitor:
         def _on_key(event):
             if event.key in ("escape", "q"): self._stop = True
             elif event.key == "d": self.show_overlay = not self.show_overlay
+            elif event.key == "c":
+                try:
+                    # Capture current ROI and append a row to labels.csv
+                    if self.eyes_mode == "both" and self.last_rects and len(self.last_rects) == 2:
+                        # Use last frame from the camera for capture (best-effort)
+                        # Note: We will capture on the next loop iteration when a frame is available.
+                        self._pending_capture = True
+                        logging.info("Capture requested: will save next valid ROI and append to labels.csv")
+                    else:
+                        logging.warning("Capture ignored: need both eyes open to record a sample.")
+                except Exception as e:
+                    logging.exception(f"Capture request error: {e}")
+            elif event.key == "o":
+                self.gate_eyes_open = not self.gate_eyes_open
+                logging.info(f"Eye-open gating toggled to: {'ON' if self.gate_eyes_open else 'OFF'} (threshold={self.eye_open_threshold:.2f})")
+            elif event.key == "t":
+                # cycle threshold among 0.8, 0.9, 1.0
+                vals = [0.8, 0.9, 1.0]
+                try:
+                    i = vals.index(round(self.eye_open_threshold,1))
+                except ValueError:
+                    i = 1
+                self.eye_open_threshold = vals[(i+1) % len(vals)]
+                logging.info(f"Eye-open threshold set to {self.eye_open_threshold:.2f}")
+            elif event.key == "a":
+                # Toggle auto-capture mode
+                if not hasattr(self, 'auto_capture_on'):
+                    self.auto_capture_on = False
+                self.auto_capture_on = not self.auto_capture_on
+                logging.info(f"Auto-capture: {'ON' if self.auto_capture_on else 'OFF'}")
         fig.canvas.mpl_connect("close_event", _on_close)
         fig.canvas.mpl_connect("key_press_event", _on_key)
 
@@ -528,11 +619,12 @@ class EyeGlucoseMonitor:
             print("Could not open webcam.")
             plt.close(fig); return
 
-        print("Webcam opened. Press 'd' to toggle overlay, 'q' to quit.")
+        print("Webcam opened. Keys: 'd' overlay, 'c' capture, 'o' gate-open toggle, 't' cycle threshold, 'q' quit")
         print("STRICT MODE: Both eyes required for prediction")
         t0 = time.time()
         smooth = None
         alpha = self.alpha
+        self._pending_capture = False
 
         try:
             while True:
@@ -544,6 +636,24 @@ class EyeGlucoseMonitor:
 
                 # STRICT: only predict with both eyes
                 if det.roi is not None and self.eyes_mode == "both" and len(det.eye_rects) == 2:
+                    # Optional eye-open gating
+                    if self.gate_eyes_open:
+                        try:
+                            scores = []
+                            for (x,y,w,h) in det.eye_rects:
+                                eye_roi = frame[y:y+h, x:x+w]
+                                scores.append(self.detector._eye_open_score(eye_roi))
+                            if not (len(scores) == 2 and scores[0] >= self.eye_open_threshold and scores[1] >= self.eye_open_threshold):
+                                msg = "Eyes appear closed (gate ON) - No prediction"
+                                (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                                cv2.rectangle(frame, (10, 10), (10+tw+10, 10+th+10), (0,0,255), -1)
+                                cv2.putText(frame, msg, (15, 10+th+3), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+                                cv2.putText(frame, f"Gate thr={self.eye_open_threshold:.2f}", (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 1)
+                                cv2.imshow("Blood Glucose", frame)
+                                plt.pause(0.001)
+                                continue
+                        except Exception:
+                            pass
                     draw_targets(frame, det.eye_rects, self.show_overlay)
                     feats = self.extract_features(det.roi)
                     y = self.predict_once(feats)
@@ -555,6 +665,28 @@ class EyeGlucoseMonitor:
                     cv2.putText(frame, "Both eyes detected", (10,35), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0,255,0), 2)
                     cv2.putText(frame, f"Inst: {y:.1f} mg/dL", (10,70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
                     cv2.putText(frame, f"Avg:  {smooth:.1f} mg/dL", (10,110), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
+                    if self.gate_eyes_open:
+                        cv2.putText(frame, f"Gate thr={self.eye_open_threshold:.2f}", (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 1)
+                    # Auto-capture when enabled and interval elapsed
+                    try:
+                        if getattr(self, 'auto_capture_on', False) and (time.time() - getattr(self, '_last_capture_ts', 0.0)) >= getattr(self, 'auto_capture_interval', 5.0):
+                            if self._save_capture(det.roi, feats):
+                                self._last_capture_ts = time.time()
+                                logging.info("📸 Auto-captured sample appended to labels.csv")
+                    except Exception as e:
+                        logging.exception(f"Auto-capture failed: {e}")
+                    # Handle capture if requested and valid
+                    if self._pending_capture:
+                        try:
+                            saved = self._save_capture(det.roi, feats)
+                            if saved:
+                                logging.info("✅ Sample captured and appended to labels.csv")
+                            else:
+                                logging.warning("⚠️ Capture skipped: ROI unavailable or save failed")
+                        except Exception as e:
+                            logging.exception(f"Capture failed: {e}")
+                        finally:
+                            self._pending_capture = False
                 else:
                     msg = "EYES CLOSED OR NOT DETECTED - No prediction"
                     (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -577,6 +709,52 @@ class EyeGlucoseMonitor:
             cap.release(); cv2.destroyAllWindows()
             try: plt.ioff(); plt.close(fig)
             except Exception: pass
+
+    def _save_capture(self, roi: Optional[np.ndarray], feats: Dict[str, float]) -> bool:
+        """Save ROI image and append a row to eye_glucose_data/labels.csv with empty blood_glucose.
+        Returns True on success."""
+        if roi is None or roi.size == 0:
+            return False
+        try:
+            os.makedirs("captures", exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            fname = f"capture_{ts}.png"
+            path = os.path.join("captures", fname)
+            ok = cv2.imwrite(path, roi)
+            if not ok:
+                return False
+
+            # Prepare row for CSV
+            row = {
+                "filename": path,
+                "session_id": self.session_id,
+                "blood_glucose": np.nan,
+            }
+            for k in FEATURES_ORDER:
+                row[k] = float(feats.get(k, np.nan)) if feats.get(k) is not None else np.nan
+
+            # Append to CSV (create if not exists)
+            labels_file = os.path.join("eye_glucose_data", "labels.csv")
+            os.makedirs(os.path.dirname(labels_file), exist_ok=True)
+            import pandas as pd
+            if os.path.exists(labels_file):
+                df = pd.read_csv(labels_file)
+            else:
+                df = pd.DataFrame()
+
+            # Ensure expected columns
+            base_cols = ["filename", "session_id", "blood_glucose"]
+            for col in base_cols + FEATURES_ORDER:
+                if col not in df.columns:
+                    df[col] = np.nan if col != "filename" and col != "session_id" else ""
+
+            # Append row in canonical order (unknown extra columns preserved)
+            ordered = [c for c in (base_cols + FEATURES_ORDER) if c in df.columns]
+            df = pd.concat([df, pd.DataFrame([{c: row.get(c, np.nan) for c in ordered}])], ignore_index=True)
+            df.to_csv(labels_file, index=False, float_format='%.10f')
+            return True
+        except Exception:
+            return False
 
 if __name__ == "__main__":
     import sys

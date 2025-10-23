@@ -13,7 +13,7 @@ from typing import Optional
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Define file paths and constants
-LABELS_FILE = "eye_glucose_data/labels.csv"
+LABELS_FILE = os.environ.get("EBG_LABELS_FILE", "eye_glucose_data/labels.csv")
 IMAGE_DIR = "eye_glucose_data/images"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(LABELS_FILE), exist_ok=True)
@@ -888,19 +888,36 @@ def batch_capture_session(num_photos=10, interval_seconds=3, session_id: Optiona
 
 if __name__ == "__main__":
     import sys
+    # Optional override for output CSV path via CLI: --csv-out <path>
+    # Example: python model.py --csv-out eye_glucose_data/labels.csv
+    if "--csv-out" in sys.argv:
+        try:
+            idx = sys.argv.index("--csv-out")
+            out_path = sys.argv[idx+1]
+            globals()["LABELS_FILE"] = out_path
+            os.makedirs(os.path.dirname(LABELS_FILE), exist_ok=True)
+        except Exception:
+            print("--csv-out requires a path argument")
+            sys.exit(2)
+
     if len(sys.argv) > 1:
         if sys.argv[1] == "--test-focus":
             test_focus()
         elif sys.argv[1] == "--batch":
             # Parse optional parameters
-            num_photos = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-            interval = int(sys.argv[3]) if len(sys.argv) > 3 else 3
+            # Usage example with override:
+            #   python model.py --batch 15 2 --csv-out eye_glucose_data/labels.csv
+            # Consume potential numeric args only; flags handled above
+            args = [a for a in sys.argv[2:] if not a.startswith("--csv-out")] 
+            num_photos = int(args[0]) if len(args) > 0 and args[0].isdigit() else 10
+            interval = int(args[1]) if len(args) > 1 and args[1].isdigit() else 3
             batch_capture_session(num_photos, interval)
         else:
             print("Usage:")
-            print("  python model.py                    # Single capture")
-            print("  python model.py --test-focus       # Focus test mode")
-            print("  python model.py --batch [N] [I]    # Batch capture N photos every I seconds")
-            print("  python model.py --batch 15 2       # Example: 15 photos every 2 seconds")
+            print("  python model.py                                # Single capture")
+            print("  python model.py --test-focus                   # Focus test mode")
+            print("  python model.py --batch [N] [I]                # Batch capture N photos every I seconds")
+            print("  python model.py --batch 15 2                   # Example: 15 photos every 2 seconds")
+            print("  python model.py --csv-out path/to/labels.csv   # Override output CSV location (also works with --batch)")
     else:
         update_data()

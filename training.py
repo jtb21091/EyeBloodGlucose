@@ -5,7 +5,8 @@
 #   (.venv) python training.py --csv eye_glucose_data/labels.csv --out best_model.pkl --mmol
 #   (.venv) python training.py --no-show --ensemble-type voting  # or 'stacking'
 
-import os, logging, warnings, json, argparse
+import os, logging, warnings, json, argparse, shutil, time
+from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
 import numpy as np, pandas as pd, joblib
 from sklearn.exceptions import ConvergenceWarning
@@ -139,12 +140,26 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 # Helpers
 # -----------------------
 def _cand_paths(here: str) -> List[str]:
-    return [
+    """Preferred search order for dataset CSVs (cleaned first)."""
+    candidates = [
+        # Prefer strong cleaned version if present
+        os.path.join("eye_glucose_data", "labels_clean_drop_any.csv"),
+        os.path.join(here, "eye_glucose_data", "labels_clean_drop_any.csv"),
+        # Then generic cleaned
+        os.path.join("eye_glucose_data", "labels_clean.csv"),
+        os.path.join(here, "eye_glucose_data", "labels_clean.csv"),
+        # Fallback to raw
         "labels.csv",
         os.path.join("eye_glucose_data", "labels.csv"),
         os.path.join(here, "labels.csv"),
         os.path.join(here, "eye_glucose_data", "labels.csv"),
     ]
+    # Deduplicate while preserving order
+    seen = set(); out = []
+    for c in candidates:
+        if c not in seen:
+            out.append(c); seen.add(c)
+    return out
 
 def resolve_csv_path(user_csv: Optional[str]) -> str:
     if user_csv and os.path.exists(user_csv):
@@ -159,10 +174,100 @@ def resolve_csv_path(user_csv: Optional[str]) -> str:
         "\n(You can also pass --csv /path/to/labels.csv)"
     )
 
+
+def _resolve_raw_csv_fallback() -> Optional[str]:
+    """Prefer the raw labels.csv for precleaning when user didn't specify a CSV."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    raw_candidates = [
+        os.path.join("eye_glucose_data", "labels.csv"),
+        os.path.join(here, "eye_glucose_data", "labels.csv"),
+        "labels.csv",
+        os.path.join(here, "labels.csv"),
+    ]
+    for c in raw_candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+def _preclean_csv(input_csv: str, mode: str = "sixsigma", output: Optional[str] = None,
+                  min_nonnull_ratio: float = 0.2, min_nonnull_count: int = 100,
+                  ignore_cols: Optional[str] = None) -> str:
+    """Run the cleaner and return path to cleaned CSV.
+
+    mode: 'sixsigma' (±6σ only) or 'strong' (also drop any zero/max with guards).
+    """
+    from clean_labels_sixsigma import clean_dataframe
+    df = pd.read_csv(input_csv)
+    ignore = [c for c in (ignore_cols.split(',') if ignore_cols else []) if c.strip()]
+
+    kwargs = dict(
+        flatline_threshold=0.02,
+        min_nonnull_ratio=min_nonnull_ratio,
+        min_nonnull_count=min_nonnull_count,
+        ignore_columns=ignore,
+    )
+    if mode == "strong":
+        kwargs.update(drop_any_zero=True, drop_any_max=True)
+    else:
+        kwargs.update(drop_any_zero=False, drop_any_max=False)
+
+    kept, removed, report = clean_dataframe(df, **kwargs)
+
+    out_path = output or os.path.join(os.path.dirname(input_csv) or ".", f"labels_clean_{mode}.csv")
+    Path(os.path.dirname(out_path) or ".").mkdir(parents=True, exist_ok=True)
+    kept.to_csv(out_path, index=False)
+    logging.info(
+        f"Preclean[{mode}] wrote {os.path.abspath(out_path)} | kept {report['rows_kept']}/{report['rows_total']} rows; removed {report['rows_removed']}"
+    )
+    return out_path
+
+def _overwrite_canonical_labels(cleaned_csv: str) -> str:
+    """Copy cleaned CSV over the canonical eye_glucose_data/labels.csv with a timestamped backup."""
+    # Determine canonical path
+    here = os.path.dirname(os.path.abspath(__file__))
+    canonical = os.path.join(here, "eye_glucose_data", "labels.csv")
+    Path(os.path.dirname(canonical)).mkdir(parents=True, exist_ok=True)
+
+    # Backup existing if present
+    if os.path.exists(canonical):
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        backup = canonical + f".backup_{ts}"
+        shutil.copyfile(canonical, backup)
+        logging.info(f"Backed up existing labels.csv to {os.path.abspath(backup)}")
+
+    # Overwrite canonical
+    shutil.copyfile(cleaned_csv, canonical)
+    logging.info(f"Wrote cleaned dataset to {os.path.abspath(canonical)}")
+    return canonical
+
+def _cleanup_clean_artifacts():
+    """Remove intermediate cleaned/removed/report files to keep only one labels.csv."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    folder = os.path.join(here, "eye_glucose_data")
+    patterns = [
+        "labels_clean*.csv",
+        "labels_removed*.csv",
+        "cleaning_report*.json",
+    ]
+    import glob
+    removed = 0
+    for pat in patterns:
+        for p in glob.glob(os.path.join(folder, pat)):
+            # Don't remove the canonical labels.csv
+            if os.path.basename(p) == "labels.csv":
+                continue
+            try:
+                os.remove(p)
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        logging.info(f"Cleaned up {removed} intermediate cleaning artifact files in {folder}")
+
 # -----------------------
 # Data prep
 # -----------------------
-def prepare_data(csv_path: Optional[str] = None, convert_mmol_to_mgdl: bool = False) -> Tuple[pd.DataFrame, pd.Series]:
+def prepare_data(csv_path: Optional[str] = None, convert_mmol_to_mgdl: bool = False, log_target: bool = False) -> Tuple[pd.DataFrame, pd.Series]:
     csv_path = resolve_csv_path(csv_path)
     logging.info(f"Reading labels from: {os.path.abspath(csv_path)}")
 
@@ -198,10 +303,20 @@ def prepare_data(csv_path: Optional[str] = None, convert_mmol_to_mgdl: bool = Fa
     new_feature_counts = {f: X[f].notna().sum() for f in new_features}
     
     logging.info(f"Target column: {target}")
-    logging.info(
-        "y stats (mg/dL expected): "
-        f"min={np.nanmin(y):.3f} max={np.nanmax(y):.3f} mean={np.nanmean(y):.3f}"
-    )
+    if log_target:
+        # Only log-transform positive values; non-positive become NaN and will be dropped by scikit automatically
+        y = pd.to_numeric(y, errors="coerce")
+        y = y.where(y > 0)
+        y = np.log(y)
+        logging.info(
+            "y stats (log mg/dL): "
+            f"min={np.nanmin(y):.3f} max={np.nanmax(y):.3f} mean={np.nanmean(y):.3f}"
+        )
+    else:
+        logging.info(
+            "y stats (mg/dL expected): "
+            f"min={np.nanmin(y):.3f} max={np.nanmax(y):.3f} mean={np.nanmean(y):.3f}"
+        )
     logging.info(f"Training features (15): {FEATURES_ORDER}")
     logging.info(f"New features availability:")
     for feat, count in new_feature_counts.items():
@@ -259,39 +374,115 @@ def plot_pred_vs_actual(y_true: np.ndarray, y_pred: np.ndarray, out_path: str = 
         plt.show()
     plt.close()
 
+def plot_residuals(y_true: np.ndarray, y_pred: np.ndarray, out_path: str = "residuals.png", show: bool = True):
+    resid = y_pred - y_true
+    plt.figure(figsize=(6,4))
+    plt.scatter(y_pred, resid, alpha=0.5)
+    plt.axhline(0.0, color='red', linestyle='--')
+    plt.xlabel("Predicted (mg/dL)")
+    plt.ylabel("Residual (Pred - True)")
+    plt.title("Residuals vs Predicted (OOF)")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    if show:
+        plt.show()
+    plt.close()
+
 def plot_feature_importance(model: Any, feature_names: List[str], out_path: str = "feature_importance.png", show: bool = True, top_n: int = 20):
-    """Plot feature importance, handling ensemble models"""
+    """Plot feature importance, handling ensemble models (Voting/Stacking) and singles.
+
+    - For VotingRegressor, estimators_ is typically a list of fitted estimators (no names).
+    - For StackingRegressor, estimators_ is also a list of fitted estimators.
+    We aggregate available importances/coefficients across base estimators.
+    """
     importances = None
-    
+
     # Try to get importance from the model
     if hasattr(model, 'named_steps') and 'regressor' in model.named_steps:
         reg = model.named_steps['regressor']
-        
+
         # Handle ensemble models
-        if isinstance(reg, (VotingRegressor, StackingRegressor)):
+        if isinstance(reg, (VotingRegressor, StackingRegressor)) and hasattr(reg, 'estimators_'):
+            # Build a normalized list of (name, estimator)
+            base_ests = reg.estimators_
+            if len(base_ests) > 0 and isinstance(base_ests[0], tuple):
+                estimators = [(name, est) for name, est in base_ests]
+            else:
+                estimators = [(f"est_{i}", est) for i, est in enumerate(base_ests)]
+
             # Average importances from base estimators that have them
-            all_importances = []
-            if isinstance(reg, VotingRegressor):
-                estimators = [(name, est) for name, est in reg.estimators_]
-            else:  # StackingRegressor
-                estimators = [(name, est) for name, est in reg.estimators_]
-            
+            agg = []
             for name, est in estimators:
+                target_est = None
                 if hasattr(est, 'named_steps') and 'regressor' in est.named_steps:
-                    base_reg = est.named_steps['regressor']
-                    if hasattr(base_reg, 'feature_importances_'):
-                        all_importances.append(base_reg.feature_importances_)
-                elif hasattr(est, 'feature_importances_'):
-                    all_importances.append(est.feature_importances_)
-            
-            if all_importances:
-                importances = np.mean(all_importances, axis=0)
+                    target_est = est.named_steps['regressor']
+                else:
+                    target_est = est
+
+                if hasattr(target_est, 'feature_importances_'):
+                    vals = np.asarray(getattr(target_est, 'feature_importances_'))
+                    agg.append(vals)
+                elif hasattr(target_est, 'coef_'):
+                    coef = getattr(target_est, 'coef_')
+                    if coef is not None:
+                        vals = np.abs(np.ravel(coef))
+                        agg.append(vals)
+
+            if agg:
+                # Ensure consistent length before averaging
+                lens = [len(v) for v in agg]
+                target_len = len(feature_names)
+                aligned = [v for v in agg if len(v) == target_len]
+                if aligned:
+                    importances = np.mean(np.stack(aligned, axis=0), axis=0)
         elif hasattr(reg, 'feature_importances_'):
-            importances = reg.feature_importances_
-    
+            importances = getattr(reg, 'feature_importances_')
+        elif hasattr(reg, 'coef_'):
+            coef = getattr(reg, 'coef_')
+            importances = np.abs(np.ravel(coef))
+
     if importances is None:
         logging.info("Feature importance not available for this model; skipping plot.")
         return
+
+    # Get feature names (might be engineered features)
+    if hasattr(model, 'named_steps') and 'feature_engineer' in model.named_steps:
+        feat_eng = model.named_steps['feature_engineer']
+        if hasattr(feat_eng, 'feature_names_'):
+            feature_names = feat_eng.feature_names_
+
+    # Sort and plot top N
+    order = np.argsort(importances)[::-1][:top_n]
+    names_sorted = np.array(feature_names)[order]
+    vals_sorted = np.array(importances)[order]
+
+    # Color engineered and new features differently
+    colors = []
+    for n in names_sorted:
+        if any(suffix in n for suffix in ['_ratio', '_index', '_squared', '_interaction']):
+            colors.append('green')  # Engineered features
+        elif n in ['lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score']:
+            colors.append('orange')  # New features
+        else:
+            colors.append('blue')  # Original features
+        for n in names_sorted:
+            if any(suffix in n for suffix in ['_ratio', '_index', '_squared', '_interaction']):
+                colors.append('green')  # Engineered features
+            elif n in ['lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score']:
+                colors.append('orange')  # New features
+            else:
+                colors.append('blue')  # Original features
+    
+        plt.figure(figsize=(12,8))
+        plt.bar(range(len(vals_sorted)), vals_sorted, color=colors)
+        plt.xticks(range(len(vals_sorted)), names_sorted, rotation=45, ha="right")
+        plt.ylabel("Importance")
+        plt.title(f"Top {top_n} Feature Importances\n(Green=Engineered, Orange=New, Blue=Original)")
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=150)
+        if show:
+            plt.show()
+        plt.close()
     
     # Get feature names (might be engineered features)
     if hasattr(model, 'named_steps') and 'feature_engineer' in model.named_steps:
@@ -328,7 +519,7 @@ def plot_feature_importance(model: Any, feature_names: List[str], out_path: str 
 # -----------------------
 # Model spaces
 # -----------------------
-def model_spaces(include_optional: bool = True) -> Dict[str, Tuple[Any, Dict[str, Any]]]:
+def model_spaces(include_optional: bool = True, fast: bool = False) -> Dict[str, Tuple[Any, Dict[str, Any]]]:
     """
     Returns dictionary of models to train.
     
@@ -413,7 +604,7 @@ def model_spaces(include_optional: bool = True) -> Dict[str, Tuple[Any, Dict[str
     }
     
     # === OPTIONAL: ADVANCED BOOSTING (require pip install) ===
-    if include_optional:
+    if include_optional and not fast:
         try:
             import xgboost as xgb
             models["XGB"] = (xgb.XGBRegressor(random_state=42, n_jobs=-1), {
@@ -457,6 +648,10 @@ def model_spaces(include_optional: bool = True) -> Dict[str, Tuple[Any, Dict[str
         except ImportError:
             logging.info("✗ CatBoost not available (pip install catboost)")
     
+    # If fast mode, keep a lean set
+    if fast:
+        keep = ["RF", "ET", "HGB", "Ridge", "Huber", "SVR"]
+        models = {k: v for k, v in models.items() if k in keep}
     return models
 
 # -----------------------
@@ -505,9 +700,12 @@ def train(csv_path: Optional[str] = None,
           use_feature_engineering: bool = True,
           use_ensemble: bool = True,
           ensemble_type: str = 'voting',
-          top_n_models: int = 3):
+        top_n_models: int = 3,
+        log_target: bool = False,
+        fast: bool = False,
+          n_iter: int = 25):
     
-    X, y = prepare_data(csv_path, convert_mmol_to_mgdl)
+    X, y = prepare_data(csv_path, convert_mmol_to_mgdl, log_target)
 
     # Build preprocessing pipeline with optional feature engineering
     pre_steps = []
@@ -528,7 +726,7 @@ def train(csv_path: Optional[str] = None,
     # Track all models
     all_results = []
     
-    models_dict = model_spaces()
+    models_dict = model_spaces(fast=fast)
     logging.info(f"\n{'='*60}")
     logging.info(f"TRAINING {len(models_dict)} MODEL TYPES:")
     for model_name in models_dict.keys():
@@ -543,7 +741,7 @@ def train(csv_path: Optional[str] = None,
         search = RandomizedSearchCV(
             pipe,
             param_distributions=space,
-            n_iter=25,
+            n_iter=n_iter if not fast else max(5, min(12, n_iter)),
             cv=cv5,
             scoring="neg_mean_squared_error",
             n_jobs=-1,
@@ -554,10 +752,16 @@ def train(csv_path: Optional[str] = None,
 
         # OOF predictions
         oof_pred = cross_val_predict(search.best_estimator_, X, y, cv=cv5, n_jobs=-1)
+        if log_target:
+            # Convert predictions back to mg/dL domain for reporting/selection
+            oof_pred = np.exp(oof_pred)
+            y_for_metrics = np.exp(y)
+        else:
+            y_for_metrics = y
 
-        mse = mean_squared_error(y, oof_pred)
-        r2  = r2_score(y, oof_pred)
-        mae = mean_absolute_error(y, oof_pred)
+        mse = mean_squared_error(y_for_metrics, oof_pred)
+        r2  = r2_score(y_for_metrics, oof_pred)
+        mae = mean_absolute_error(y_for_metrics, oof_pred)
         
         all_results.append({
             'name': name,
@@ -613,6 +817,11 @@ def train(csv_path: Optional[str] = None,
         
         # Get OOF predictions for ensemble
         oof_pred = cross_val_predict(final_model, X, y, cv=cv5, n_jobs=-1)
+        if log_target:
+            oof_pred = np.exp(oof_pred)
+            y_for_metrics = np.exp(y)
+        else:
+            y_for_metrics = y
         
         best_name = f"{ensemble_type.capitalize()}Ensemble_Top{top_n_models}"
         
@@ -621,6 +830,11 @@ def train(csv_path: Optional[str] = None,
         best_result = all_results[0]
         final_model = best_result['model']
         oof_pred = best_result['oof_pred']
+        if log_target:
+            oof_pred = np.exp(oof_pred)
+            y_for_metrics = np.exp(y)
+        else:
+            y_for_metrics = y
         best_name = best_result['name']
         logging.info(f"Using single best model: {best_name}")
 
@@ -648,7 +862,7 @@ def train(csv_path: Optional[str] = None,
     logging.info(f"Wrote schema to {os.path.abspath('model_schema.json')}")
 
     # Calculate metrics
-    y_true = y
+    y_true = y_for_metrics
     y_pred = oof_pred
 
     mard = compute_mard(y_true, y_pred)
@@ -680,9 +894,9 @@ def train(csv_path: Optional[str] = None,
         "top_n_models": top_n_models if use_ensemble else 1,
         "feature_engineering": use_feature_engineering,
         "num_features": len(feature_names),
-        "oof_r2": float(r2_score(y_true, y_pred)),
-        "oof_mse": float(mean_squared_error(y_true, y_pred)),
-        "oof_mae": float(mean_absolute_error(y_true, y_pred)),
+    "oof_r2": float(r2_score(y_true, y_pred)),
+    "oof_mse": float(mean_squared_error(y_true, y_pred)),
+    "oof_mae": float(mean_absolute_error(y_true, y_pred)),
         "mard_percent": float(mard),
         "yield_within_spec": float(yield_rate),
         "defects": defects,
@@ -700,8 +914,24 @@ def train(csv_path: Optional[str] = None,
     logging.info(f"Wrote metrics to {os.path.abspath('metrics.json')}")
 
     # Plots
+    Path("pngfiles").mkdir(parents=True, exist_ok=True)
     plot_pred_vs_actual(y_true, y_pred, out_path="pred_vs_actual.png", show=show_plots)
+    try:
+        shutil.copyfile("pred_vs_actual.png", os.path.join("pngfiles", "3.png"))
+    except Exception as e:
+        logging.warning(f"Could not mirror pred_vs_actual.png to pngfiles/3.png: {e}")
+
+    plot_residuals(y_true, y_pred, out_path="residuals.png", show=show_plots)
+    try:
+        shutil.copyfile("residuals.png", os.path.join("pngfiles", "2.png"))
+    except Exception as e:
+        logging.warning(f"Could not mirror residuals.png to pngfiles/2.png: {e}")
+
     plot_feature_importance(final_model, feature_names, out_path="feature_importance.png", show=show_plots)
+    try:
+        shutil.copyfile("feature_importance.png", os.path.join("pngfiles", "4.png"))
+    except Exception as e:
+        logging.warning(f"Could not mirror feature_importance.png to pngfiles/4.png: {e}")
 
 # -----------------------
 # CLI
@@ -718,11 +948,50 @@ def parse_args():
     p.add_argument("--ensemble-type", choices=['voting', 'stacking'], default='voting',
                    help="Type of ensemble: 'voting' (averaging) or 'stacking' (meta-learner).")
     p.add_argument("--top-n", type=int, default=3, help="Number of top models to ensemble (default: 3).")
+    p.add_argument("--log-target", action="store_true", help="Train on log(glucose); metrics reported in mg/dL.")
+    p.add_argument("--fast", action="store_true", help="Faster run: fewer models and fewer search iterations.")
+    p.add_argument("--n-iter", type=int, default=25, help="Search iterations per model (default 25).")
+    # Integrated preclean options
+    p.add_argument("--preclean", choices=["none", "sixsigma", "strong"], default="none",
+                   help="Optionally clean the CSV before training. 'strong' also drops zero/max rows with guards.")
+    p.add_argument("--min-nonnull-ratio", type=float, default=0.2,
+                   help="Minimum non-null ratio required to apply zero/max rules in 'strong' mode.")
+    p.add_argument("--min-nonnull-count", type=int, default=100,
+                   help="Minimum non-null count required to apply zero/max rules in 'strong' mode.")
+    p.add_argument("--ignore-cols", type=str, default="",
+                   help="Comma-separated list of columns to ignore during preclean.")
+    p.add_argument("--overwrite-labels", action="store_true",
+                   help="After preclean, overwrite eye_glucose_data/labels.csv with cleaned data (backup created).")
+    p.add_argument("--cleanup-clean-files", action="store_true",
+                   help="Delete intermediate cleaned/removed/report files so only labels.csv remains.")
     return p.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     chosen_csv = args.csv_kw if args.csv_kw is not None else args.csv
+    # Optional preclean
+    if args.preclean != "none":
+        base_csv = chosen_csv
+        if base_csv is None:
+            base_csv = _resolve_raw_csv_fallback()
+            if base_csv is None:
+                # Fall back to normal resolver if raw not found
+                base_csv = resolve_csv_path(None)
+        cleaned_csv = _preclean_csv(
+            input_csv=base_csv,
+            mode=("strong" if args.preclean == "strong" else "sixsigma"),
+            output=None,
+            min_nonnull_ratio=args.min_nonnull_ratio,
+            min_nonnull_count=args.min_nonnull_count,
+            ignore_cols=args.ignore_cols,
+        )
+        if args.overwrite_labels:
+            canonical = _overwrite_canonical_labels(cleaned_csv)
+            chosen_csv = canonical
+            if args.cleanup_clean_files:
+                _cleanup_clean_artifacts()
+        else:
+            chosen_csv = cleaned_csv
     train(
         csv_path=chosen_csv,
         out_path=args.out_path,
@@ -732,4 +1001,7 @@ if __name__ == "__main__":
         use_ensemble=(not args.no_ensemble),
         ensemble_type=args.ensemble_type,
         top_n_models=args.top_n,
+        log_target=args.log_target,
+        fast=args.fast,
+        n_iter=args.n_iter,
     )
