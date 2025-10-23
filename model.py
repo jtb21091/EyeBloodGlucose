@@ -886,6 +886,32 @@ def batch_capture_session(num_photos=10, interval_seconds=3, session_id: Optiona
     return captured_files, quality_scores, session_id
 
 
+def process_batch(images):
+    """
+    Process a batch of images and extract features for each image.
+    Args:
+        images (list of np.ndarray): List of images to process.
+    Returns:
+        list of dict: List of feature dictionaries for each image.
+    """
+    batch_features = []
+
+    for image in images:
+        features = {
+            'pupil_size': get_pupil_size(image),
+            'sclera_redness': get_sclera_redness(image),
+            'vein_prominence': get_vein_prominence(image),
+            'ir_intensity': get_ir_intensity(image),
+            'scleral_vein_density': get_scleral_vein_density(image),
+            'tear_film_reflectivity': get_tear_film_reflectivity(image),
+            # Add other feature extraction functions as needed
+        }
+        batch_features.append(features)
+
+    logging.debug("Processed batch of %d images", len(images))
+    return batch_features
+
+
 if __name__ == "__main__":
     import sys
     # Optional override for output CSV path via CLI: --csv-out <path>

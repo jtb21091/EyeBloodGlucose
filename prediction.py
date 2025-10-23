@@ -11,6 +11,9 @@ from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Define LABELS_FILE at the top of the script
+LABELS_FILE = "eye_glucose_data/labels.csv"
+
 # UPDATED FEATURES ORDER - 15 features now
 FEATURES_ORDER = [
     'pupil_size', 'sclera_redness', 'vein_prominence', 'capture_duration', 'ir_intensity',
@@ -611,6 +614,9 @@ class EyeGlucoseMonitor:
                     self.auto_capture_on = False
                 self.auto_capture_on = not self.auto_capture_on
                 logging.info(f"Auto-capture: {'ON' if self.auto_capture_on else 'OFF'}")
+            elif event.key == "b":
+                batch_mode = not batch_mode
+                logging.info("Batch mode %s.", "enabled" if batch_mode else "disabled")
         fig.canvas.mpl_connect("close_event", _on_close)
         fig.canvas.mpl_connect("key_press_event", _on_key)
 
@@ -625,6 +631,7 @@ class EyeGlucoseMonitor:
         smooth = None
         alpha = self.alpha
         self._pending_capture = False
+        batch_mode = False
 
         try:
             while True:
@@ -756,7 +763,55 @@ class EyeGlucoseMonitor:
         except Exception:
             return False
 
+def capture_batch(cap, batch_size=5, interval=3):
+    """
+    Capture a batch of images from the webcam.
+    Args:
+        cap: OpenCV VideoCapture object.
+        batch_size: Number of images to capture in the batch.
+        interval: Time interval (in seconds) between captures.
+    Returns:
+        list of np.ndarray: Captured images.
+    """
+    batch = []
+    for _ in range(batch_size):
+        ret, frame = cap.read()
+        if not ret:
+            logging.warning("Failed to capture frame.")
+            continue
+        batch.append(frame)
+        time.sleep(interval)
+    logging.info("Captured batch of %d images.", len(batch))
+    return batch
+
+def log_batch_data(batch_features, session_id):
+    """
+    Log batch features to the labels CSV file.
+    Args:
+        batch_features: List of feature dictionaries.
+        session_id: Unique session identifier for the batch.
+    """
+    if not batch_features:
+        logging.warning("No features to log.")
+        return
+
+    df = pd.DataFrame(batch_features)
+    df['session_id'] = session_id
+
+    if not os.path.exists(LABELS_FILE):
+        df.to_csv(LABELS_FILE, index=False)
+    else:
+        df.to_csv(LABELS_FILE, mode='a', header=False, index=False)
+
+    logging.info("Logged batch data to %s.", LABELS_FILE)
+
+def main():
+    model = "best_model.pkl"
+    EyeGlucoseMonitor(model).run()
+
 if __name__ == "__main__":
     import sys
-    model = sys.argv[1] if len(sys.argv) > 1 else "best_model.pkl"
-    EyeGlucoseMonitor(model).run()
+    if len(sys.argv) > 1:
+        EyeGlucoseMonitor(sys.argv[1]).run()
+    else:
+        EyeGlucoseMonitor("best_model.pkl").run()
