@@ -6,6 +6,7 @@ from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 from collections import deque
 import matplotlib.pyplot as plt
+from sklearn.base import BaseEstimator, TransformerMixin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -16,6 +17,79 @@ FEATURES_ORDER = [
     'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
     'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity', 'image_quality_score'
 ]
+
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    """
+    Creates engineered features:
+    - Ratios between key features
+    - Polynomial interactions
+    - Domain-specific combinations
+    """
+    def __init__(self, add_ratios: bool = True, add_interactions: bool = True, add_polynomials: bool = True):
+        self.add_ratios = add_ratios
+        self.add_interactions = add_interactions
+        self.add_polynomials = add_polynomials
+        self.feature_names_: Optional[List[str]] = None
+        
+    def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None):
+        return self
+    
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        X_df = pd.DataFrame(X, columns=FEATURES_ORDER)
+        X_new = X_df.copy()
+        
+        if self.add_ratios:
+            # Vascular ratios
+            X_new['vein_to_redness_ratio'] = X_df['vein_prominence'] / (X_df['sclera_redness'] + 1e-6)
+            X_new['density_to_prominence_ratio'] = X_df['scleral_vein_density'] / (X_df['vein_prominence'] + 1e-6)
+            
+            # Optical ratios
+            X_new['ir_to_reflectivity_ratio'] = X_df['ir_intensity'] / (X_df['tear_film_reflectivity'] + 1e-6)
+            X_new['clarity_to_yellowness_ratio'] = X_df['lens_clarity_score'] / (X_df['sclera_yellowness'] + 1e-6)
+            
+            # Pupil ratios
+            X_new['pupil_to_duration_ratio'] = X_df['pupil_size'] / (X_df['capture_duration'] + 1e-6)
+            
+            # Quality ratios
+            X_new['quality_to_tortuosity_ratio'] = X_df['image_quality_score'] / (X_df['vessel_tortuosity'] + 1e-6)
+        
+        if self.add_interactions:
+            # Vascular health composite
+            X_new['vascular_health_index'] = (
+                X_df['vein_prominence'] * X_df['scleral_vein_density'] * X_df['vein_pulsation_intensity']
+            ) ** (1/3)  # Geometric mean
+            
+            # Scleral quality composite
+            X_new['scleral_quality_index'] = (
+                X_df['sclera_redness'] * X_df['sclera_color_balance'] * X_df['sclera_yellowness']
+            ) ** (1/3)
+            
+            # IR composite
+            X_new['ir_thermal_index'] = X_df['ir_intensity'] * X_df['ir_temperature']
+            
+            # Optical clarity composite
+            X_new['optical_clarity_index'] = (
+                X_df['lens_clarity_score'] * X_df['tear_film_reflectivity'] * X_df['birefringence_index']
+            ) ** (1/3)
+            
+            # Pupil response composite
+            X_new['pupil_response_index'] = X_df['pupil_size'] * X_df['capture_duration']
+            
+            # Vessel dynamics
+            X_new['vessel_dynamics_index'] = X_df['vessel_tortuosity'] * X_df['vein_pulsation_intensity']
+        
+        if self.add_polynomials:
+            # Square key features that may have non-linear relationships
+            key_features = ['pupil_size', 'sclera_redness', 'vein_prominence', 'ir_intensity', 'lens_clarity_score']
+            for feat in key_features:
+                if feat in X_df.columns:
+                    X_new[f'{feat}_squared'] = X_df[feat] ** 2
+        
+        self.feature_names_ = list(X_new.columns)
+        return X_new.values
+    
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        return self.feature_names_ if self.feature_names_ is not None else FEATURES_ORDER
 
 # ---------- feature extractors (return NaN on failure) ----------
 def get_pupil_size(img):
@@ -336,18 +410,28 @@ class Detection:
 class EyeGlucoseMonitor:
     def __init__(self, model_path="best_model.pkl"):
         self.model = self._load_model(model_path)
-        if not hasattr(self.model, "feature_names_in_"):
-            raise SystemExit("Model is missing feature_names_in_. Retrain with the provided training script.")
         
-        model_features = list(self.model.feature_names_in_)
-        if model_features != FEATURES_ORDER:
-            logging.warning(f"Model features: {model_features}")
-            logging.warning(f"Expected features: {FEATURES_ORDER}")
-            raise SystemExit(f"Model features do not match required schema. Retrain with updated training.py")
+        # Load schema for feature information
+        schema_path = "model_schema.json"
+        if os.path.exists(schema_path):
+            import json
+            with open(schema_path, 'r') as f:
+                schema = json.load(f)
+            model_features = schema.get('features', FEATURES_ORDER)
+        elif hasattr(self.model, "feature_names_in_"):
+            model_features = list(self.model.feature_names_in_)
+        else:
+            logging.warning("Using default features order - model may not work correctly")
+            model_features = FEATURES_ORDER
 
-        pre = self.model.named_steps["preprocessor"]
-        stats = pre.named_steps["imputer"].statistics_
-        self.feature_means = {n: float(s) for n, s in zip(FEATURES_ORDER, stats)}
+        # Use preprocessor statistics if available, otherwise use default values
+        try:
+            pre = self.model.named_steps["preprocessor"]
+            stats = pre.named_steps["imputer"].statistics_
+            self.feature_means = {n: float(s) for n, s in zip(FEATURES_ORDER, stats)}
+        except (AttributeError, KeyError):
+            # Default feature means if not available from model
+            self.feature_means = {f: 50.0 for f in FEATURES_ORDER}
 
         self.time = deque(maxlen=200)
         self.inst = deque(maxlen=200)

@@ -7,6 +7,7 @@ import mediapipe as mp  # type: ignore
 import time
 from datetime import datetime
 from contextlib import contextmanager
+from typing import Optional
 
 # Setup logging: change level to DEBUG to see detailed logs.
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -16,6 +17,27 @@ LABELS_FILE = "eye_glucose_data/labels.csv"
 IMAGE_DIR = "eye_glucose_data/images"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(LABELS_FILE), exist_ok=True)
+
+CSV_COLUMNS = [
+    'filename',
+    'session_id',
+    'blood_glucose',
+    'pupil_size',
+    'sclera_redness',
+    'vein_prominence',
+    'capture_duration',
+    'ir_intensity',
+    'scleral_vein_density',
+    'ir_temperature',
+    'tear_film_reflectivity',
+    'sclera_color_balance',
+    'vein_pulsation_intensity',
+    'birefringence_index',
+    'lens_clarity_score',
+    'sclera_yellowness',
+    'vessel_tortuosity',
+    'image_quality_score'
+]
 
 # Edge detection thresholds (tuned further)
 EDGE_LOW_THRESHOLD = 10
@@ -64,6 +86,35 @@ def adjust_camera_settings(cap):
         logging.debug("Could not set autofocus")
     
     logging.debug("Camera settings optimization attempted")
+
+
+def ensure_labels_file_structure():
+    """Ensure the labels CSV contains the expected columns (including session id)."""
+    if not os.path.exists(LABELS_FILE):
+        return
+
+    try:
+        df = pd.read_csv(LABELS_FILE)
+    except pd.errors.EmptyDataError:
+        return
+
+    changed = False
+
+    if 'session_id' not in df.columns:
+        df.insert(1, 'session_id', '')
+        changed = True
+
+    for col in CSV_COLUMNS:
+        if col not in df.columns:
+            df[col] = np.nan
+            changed = True
+
+    if list(df.columns) != CSV_COLUMNS:
+        df = df[[col for col in CSV_COLUMNS if col in df.columns]]
+        changed = True
+
+    if changed:
+        df.to_csv(LABELS_FILE, index=False, float_format='%.10f')
 
 
 @contextmanager
@@ -618,6 +669,7 @@ def test_focus():
 
 def update_data():
     """Capture an eye image, compute measurement values, and update the dataset."""
+    ensure_labels_file_structure()
     result = capture_and_measure()
     
     if result is None:
@@ -625,9 +677,10 @@ def update_data():
         return
     
     filename, measurements = result
+    session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     new_entry = pd.DataFrame([[
-        filename, "",
+        filename, session_id, "",
         measurements['pupil_size'],
         measurements['sclera_redness'],
         measurements['vein_prominence'],
@@ -643,14 +696,7 @@ def update_data():
         measurements['sclera_yellowness'],
         measurements['vessel_tortuosity'],
         measurements['image_quality_score']
-    ]], columns=[
-        'filename', 'blood_glucose', 'pupil_size', 'sclera_redness',
-        'vein_prominence', 'capture_duration', 'ir_intensity',
-        'scleral_vein_density', 'ir_temperature', 'tear_film_reflectivity',
-        'sclera_color_balance', 'vein_pulsation_intensity', 'birefringence_index',
-        'lens_clarity_score', 'sclera_yellowness', 'vessel_tortuosity',
-        'image_quality_score'
-    ])
+    ]], columns=CSV_COLUMNS)
 
     # Use append mode so that each run adds a new row
     if not os.path.exists(LABELS_FILE):
@@ -666,9 +712,195 @@ def update_data():
     print("\nRemember to add your blood glucose reading to the CSV file.")
 
 
+def batch_capture_session(num_photos=10, interval_seconds=3, session_id: Optional[str] = None):
+    """
+    Capture multiple eye photos in a batch session for dataset building.
+    Automatically captures photos at intervals with quality checks.
+    """
+    ensure_labels_file_structure()
+    session_id = session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    print(f"\n🎯 BATCH CAPTURE SESSION")
+    print("=" * 60)
+    print(f"📸 Will capture {num_photos} photos every {interval_seconds} seconds")
+    print(f"🆔 Session ID: {session_id}")
+    print("✓ Remove glasses and maintain good lighting")
+    print("✓ Look directly at camera for each capture")
+    print("✓ Press 'q' anytime to stop early")
+    print("=" * 60 + "\n")
+    
+    captured_files = []
+    quality_scores = []
+    
+    try:
+        with open_camera() as cap:
+            # Quick warmup
+            logging.info("Warming up camera...")
+            for i in range(10):
+                ret, _ = cap.read()
+                if not ret:
+                    continue
+                time.sleep(0.1)
+            
+            for photo_num in range(1, num_photos + 1):
+                print(f"\n📸 Preparing capture {photo_num}/{num_photos}...")
+                
+                # Show countdown
+                countdown_start = time.time()
+                while time.time() - countdown_start < interval_seconds:
+                    ret, frame = cap.read()
+                    if not ret:
+                        continue
+                    
+                    remaining = interval_seconds - (time.time() - countdown_start)
+                    
+                    # Check quality in real-time
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    
+                    # Draw countdown and quality info
+                    display = frame.copy()
+                    h, w = display.shape[:2]
+                    
+                    # Countdown
+                    countdown_text = f"Capture in: {remaining:.1f}s"
+                    cv2.putText(display, countdown_text, 
+                               (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                    
+                    # Photo counter
+                    counter_text = f"Photo {photo_num}/{num_photos}"
+                    cv2.putText(display, counter_text, 
+                               (50, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                    
+                    # Quality check
+                    quality_color = (0, 255, 0) if blur_score > 100 else (0, 165, 255)
+                    quality_text = f"Quality: {blur_score:.0f} ({'Good' if blur_score > 100 else 'Fair'})"
+                    cv2.putText(display, quality_text, 
+                               (50, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, quality_color, 2)
+                    
+                    # Instructions
+                    cv2.putText(display, "Look directly at camera", 
+                               (50, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(display, "Press 'q' to stop", 
+                               (50, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+                    
+                    cv2.imshow("Batch Capture Session", display)
+                    
+                    # Check for quit
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        cv2.destroyAllWindows()
+                        print(f"\n⏹️ Session stopped early. Captured {len(captured_files)} photos.")
+                        return captured_files, quality_scores, session_id
+                
+                # Capture the photo
+                ret, frame = cap.read()
+                if not ret:
+                    print(f"❌ Failed to capture photo {photo_num}")
+                    continue
+                
+                # Extract ROI and enhance
+                roi = extract_eye_roi(frame)
+                roi_enhanced = enhance_roi(roi)
+                
+                # Check quality
+                quality_score = get_image_quality_score(roi_enhanced)
+                quality_scores.append(quality_score)
+                
+                # Measure capture duration (simplified for batch mode)
+                batch_capture_duration = interval_seconds
+                
+                # Save the enhanced ROI
+                file_name = f"eye_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{photo_num:02d}.png"
+                file_path = os.path.join(IMAGE_DIR, file_name)
+                cv2.imwrite(file_path, roi_enhanced, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+                
+                captured_files.append(file_name)
+                
+                # Compute all measurements
+                measurements = {
+                    'pupil_size': get_pupil_size(roi_enhanced),
+                    'sclera_redness': get_sclera_redness(roi_enhanced),
+                    'vein_prominence': get_vein_prominence(roi_enhanced),
+                    'capture_duration': batch_capture_duration,
+                    'ir_intensity': get_ir_intensity(roi_enhanced),
+                    'scleral_vein_density': get_scleral_vein_density(roi_enhanced),
+                    'ir_temperature': get_ir_temperature(roi_enhanced),
+                    'tear_film_reflectivity': get_tear_film_reflectivity(roi_enhanced),
+                    'sclera_color_balance': get_sclera_color_balance(roi_enhanced),
+                    'vein_pulsation_intensity': get_vein_pulsation_intensity(roi_enhanced),
+                    'birefringence_index': get_birefringence_index(roi_enhanced),
+                    'lens_clarity_score': get_lens_clarity_score(roi_enhanced),
+                    'sclera_yellowness': get_sclera_yellowness(roi_enhanced),
+                    'vessel_tortuosity': get_vessel_tortuosity(roi_enhanced),
+                    'image_quality_score': quality_score
+                }
+                
+                # Add to CSV with empty blood glucose (to be filled later)
+                new_entry = pd.DataFrame([[
+                    file_name, session_id, "",  # Empty blood glucose - user will fill this
+                    measurements['pupil_size'],
+                    measurements['sclera_redness'],
+                    measurements['vein_prominence'],
+                    measurements['capture_duration'],
+                    measurements['ir_intensity'],
+                    measurements['scleral_vein_density'],
+                    measurements['ir_temperature'],
+                    measurements['tear_film_reflectivity'],
+                    measurements['sclera_color_balance'],
+                    measurements['vein_pulsation_intensity'],
+                    measurements['birefringence_index'],
+                    measurements['lens_clarity_score'],
+                    measurements['sclera_yellowness'],
+                    measurements['vessel_tortuosity'],
+                    measurements['image_quality_score']
+                ]], columns=CSV_COLUMNS)
+                
+                # Append to CSV
+                if not os.path.exists(LABELS_FILE):
+                    new_entry.to_csv(LABELS_FILE, index=False, float_format='%.10f')
+                else:
+                    new_entry.to_csv(LABELS_FILE, mode='a', header=False, index=False, float_format='%.10f')
+                
+                print(f"✅ Captured {file_name} (Quality: {quality_score:.1f}/100)")
+                
+            cv2.destroyAllWindows()
+            
+    except Exception as e:
+        cv2.destroyAllWindows()
+        logging.error(f"Error during batch capture: {e}")
+        
+    # Summary
+    print(f"\n🎉 BATCH CAPTURE COMPLETE!")
+    print("=" * 60)
+    print(f"📸 Total photos captured: {len(captured_files)}")
+    print(f"🆔 Session ID: {session_id}")
+    print(f"📊 Average quality score: {np.mean(quality_scores):.1f}/100" if quality_scores else "N/A")
+    print(f"💾 Images saved to: {IMAGE_DIR}/")
+    print(f"📋 Data added to: {LABELS_FILE}")
+    print("\n📝 NEXT STEPS:")
+    print("1. Check your blood glucose with glucometer")
+    print("2. Edit the CSV file to add blood glucose values")
+    print("3. Run training.py to retrain with new data")
+    print("=" * 60)
+    
+    return captured_files, quality_scores, session_id
+
+
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--test-focus":
-        test_focus()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--test-focus":
+            test_focus()
+        elif sys.argv[1] == "--batch":
+            # Parse optional parameters
+            num_photos = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+            interval = int(sys.argv[3]) if len(sys.argv) > 3 else 3
+            batch_capture_session(num_photos, interval)
+        else:
+            print("Usage:")
+            print("  python model.py                    # Single capture")
+            print("  python model.py --test-focus       # Focus test mode")
+            print("  python model.py --batch [N] [I]    # Batch capture N photos every I seconds")
+            print("  python model.py --batch 15 2       # Example: 15 photos every 2 seconds")
     else:
         update_data()
