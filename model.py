@@ -886,30 +886,61 @@ def batch_capture_session(num_photos=10, interval_seconds=3, session_id: Optiona
     return captured_files, quality_scores, session_id
 
 
-def process_batch(images):
+def capture_and_log_batch(batch_size=5, interval=3, save_images=True, image_prefix="batch_capture"):
     """
-    Process a batch of images and extract features for each image.
+    Capture a batch of images, extract features, and log to labels.csv.
     Args:
-        images (list of np.ndarray): List of images to process.
-    Returns:
-        list of dict: List of feature dictionaries for each image.
+        batch_size (int): Number of images to capture.
+        interval (int): Time interval (seconds) between captures.
+        save_images (bool): Whether to save images to disk.
+        image_prefix (str): Prefix for saved image filenames.
     """
-    batch_features = []
-
-    for image in images:
-        features = {
-            'pupil_size': get_pupil_size(image),
-            'sclera_redness': get_sclera_redness(image),
-            'vein_prominence': get_vein_prominence(image),
-            'ir_intensity': get_ir_intensity(image),
-            'scleral_vein_density': get_scleral_vein_density(image),
-            'tear_film_reflectivity': get_tear_film_reflectivity(image),
-            # Add other feature extraction functions as needed
-        }
-        batch_features.append(features)
-
-    logging.debug("Processed batch of %d images", len(images))
-    return batch_features
+    images = []
+    rows = []
+    session_id = datetime.now().strftime("session_%Y%m%d_%H%M%S")
+    with open_camera() as cap:
+        for i in range(batch_size):
+            ret, frame = cap.read()
+            if not ret:
+                logging.warning(f"Failed to capture frame {i+1}.")
+                continue
+            images.append(frame)
+            filename = f"{image_prefix}_{session_id}_{i+1:02d}.png"
+            filepath = os.path.join(IMAGE_DIR, filename)
+            if save_images:
+                cv2.imwrite(filepath, frame)
+                logging.info(f"Saved image: {filepath}")
+            # Extract features
+            features = {
+                'filename': filename,
+                'session_id': session_id,
+                'blood_glucose': '',  # To be filled manually
+                'pupil_size': get_pupil_size(frame),
+                'sclera_redness': get_sclera_redness(frame),
+                'vein_prominence': get_vein_prominence(frame),
+                'capture_duration': '',  # Optional, can be filled if measured
+                'ir_intensity': get_ir_intensity(frame),
+                'scleral_vein_density': get_scleral_vein_density(frame),
+                'ir_temperature': get_ir_temperature(frame),
+                'tear_film_reflectivity': get_tear_film_reflectivity(frame),
+                'sclera_color_balance': get_sclera_color_balance(frame),
+                'vein_pulsation_intensity': get_vein_pulsation_intensity(frame),
+                'birefringence_index': get_birefringence_index(frame),
+                'lens_clarity_score': get_lens_clarity_score(frame),
+                'sclera_yellowness': get_sclera_yellowness(frame),
+                'vessel_tortuosity': get_vessel_tortuosity(frame),
+                'image_quality_score': get_image_quality_score(frame)
+            }
+            rows.append(features)
+            time.sleep(interval)
+    # Log to CSV
+    df = pd.DataFrame(rows)
+    if not os.path.exists(LABELS_FILE):
+        df.to_csv(LABELS_FILE, index=False)
+    else:
+        df.to_csv(LABELS_FILE, mode='a', header=False, index=False)
+    logging.info(f"Batch capture and logging complete: {len(images)} images logged to {LABELS_FILE}.")
+    return images
 
 
 if __name__ == "__main__":
